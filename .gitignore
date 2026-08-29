@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Local configuration that may name hosts or carry an allowlist.
+# Nothing secret should ever live here -- capability comes from the process
+# environment, never from a file -- but a host-specific config is still noise
+# in a shared repo.
+config.local.json
+
+# Editor / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# Generated semantic indexes. Rebuildable with `vault_index.py build`, and
+# several MB of float vectors apiece -- a build artefact, not source. The
+# vectors are also only valid for the embedding model and prefixes that made
+# them, so a committed index goes stale invisibly. An index also contains the
+# text of everything it indexed, so committing one publishes the corpus.
+#
+# Scoped to the repo root, not `**`, so that example or fixture JSON in a
+# subdirectory is still trackable rather than silently disappearing.
+/*.json

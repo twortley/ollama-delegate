@@ -1,0 +1,17 @@
+# Dependencies.
+#
+# This file records WHAT FORCED each dependency, not merely what is installed,
+# so the "no new dependencies" rule can be audited rather than eroded. A
+# dependency with no stated forcing reason is one nobody can argue against
+# later.
+#
+# mcp -- the MCP Python SDK. Forced by: being an MCP server. Provides the
+#        stdio transport and the tool-registration decorator. Both SDK
+#        generations are tolerated in source, so this is unpinned.
+mcp
+
+# NOT taken, deliberately:
+#   requests / httpx -- Ollama's API is JSON over HTTP, which stdlib urllib
+#                       already does. The trade is no connection pooling and
+#                       no retry logic; for one call per tool invocation
+#                       against localhost, neither earns a dependency.

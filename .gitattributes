@@ -1,0 +1,26 @@
+# Line-ending & encoding hygiene. Normalize ALL text to LF in the repo and
+# working tree, so files never show as wholesale "modified" from CRLF<->LF on
+# Windows, and byte output stays deterministic.
+* text=auto eol=lf
+
+# Explicit text types (kept LF)
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.txt   text eol=lf
+*.csv   text eol=lf
+*.cfg   text eol=lf
+*.toml  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+
+# Binary — never normalize or diff as text
+*.docx  binary
+*.doc   binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.xlsx  binary
+*.xls   binary
