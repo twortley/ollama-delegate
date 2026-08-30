@@ -26,3 +26,7 @@ desktop.ini
 # Scoped to the repo root, not `**`, so that example or fixture JSON in a
 # subdirectory is still trackable rather than silently disappearing.
 /*.json
+# A built index contains the corpus, verbatim, in its chunk text. `/*.json`
+# only covers the repository root; an index directory pointed anywhere inside
+# the tree by OLLAMA_MCP_INDEX_DIR would slip past it.
+*.index.json

@@ -293,9 +293,27 @@ this through tool calls would pull thousands of float arrays into its context an
 hit the limit almost immediately.
 
 ```bash
-.venv/bin/python vault_index.py build /path/to/your-notes --out notes_index.json --rebuild
-.venv/bin/python vault_index.py search notes_index.json "why did the GPUs slow down"
+export OLLAMA_MCP_INDEX_DIR=~/.ollama-delegate/indexes
+
+.venv/bin/python vault_index.py build /path/to/your-notes \
+    --name notes --describe "engineering notes and runbooks" --rebuild
+.venv/bin/python vault_index.py search notes "why did the GPUs slow down"
+.venv/bin/python vault_index.py status notes
 ```
+
+**An index is named, not located.** Indexes are written as
+`<name>.index.json` into `$OLLAMA_MCP_INDEX_DIR` (or `--dir`), and `<name>` is
+`[a-z0-9_-]+` — no dots, no separators, no path. That is the same directory the
+`index_*` MCP tools read, and the only one they can reach.
+
+**Several indexes is the expected case.** Notes, code and a client's documents
+are separate corpora; mixing them degrades retrieval and stops you searching one
+without the others. `--describe` is what a caller chooses between them on.
+
+`status` re-hashes the corpus against the digests stored at build time and names
+what changed — added, changed, removed. It exits 1 on drift, so it can gate a
+script, and 2 when `source_root` is not reachable from this host, which is a
+different answer from "unchanged" and must not be read as one.
 
 It reads the embedding model's real context limit rather than assuming one,
 chunks on paragraph boundaries, applies the model's required task prefixes and
@@ -320,7 +338,7 @@ GPUs in this machine" scores as well as one explaining why they slowed down.
 `--rerank` has a local model judge the candidates instead.
 
 ```bash
-.venv/bin/python vault_index.py search notes_index.json "why did the GPUs slow down" --rerank
+.venv/bin/python vault_index.py search notes "why did the GPUs slow down" --rerank
 ```
 
 | Flag | Default | Notes |
@@ -343,11 +361,89 @@ The figures above were measured on one corpus on one host. Treat model fitness
 and batch size as portable; treat pool width and the spread threshold as things
 to re-measure on your own material.
 
+### Driving retrieval from an agent — the `index_*` tools
+
+Four extra tools let a model run the search itself instead of a human pasting
+terminal output. **They are off by default.** Setting `OLLAMA_MCP_INDEX_DIR`
+registers them; unset, the server is exactly the nine-tool bridge above and
+`index_tools.py` is never even imported.
+
+| Tool | Returns |
+|---|---|
+| `index_list()` | Every index in the directory: name, description, `built_at`, counts, embedding model. A few dozen tokens for the lot. |
+| `index_search(index, query, k, rerank)` | **Citations, not content** — chunk id, path, heading, line range, scores. |
+| `index_get(index, ids)` | The text of named chunks, from the index. Called after a search, on the two that mattered. |
+| `index_explain(index, query, text)` | Where a phrase you expect actually ranks, and whether that is a recall or a ranking failure. |
+
+**The rule: anything that touches your corpus is a CLI operation; MCP reads the
+index.** No tool here takes a filesystem path, and none opens a file under your
+notes — `index_get` hydrates from chunk text stored inside the index. Building
+and `status` stay on the CLI because both read arbitrary files. That is what
+makes *"no MCP tool reads your filesystem"* structural rather than a guard
+somebody has to remember to call.
+
+**Why citations rather than content.** Returning text forces `k` to be a
+context-budget decision taken before anything is known about relevance: ask for
+10 and you pay for 10, including the 7 that were noise. Citations move that
+decision after the evidence. Against a 403-chunk corpus, reading it through a
+filesystem MCP costs ~200,000 tokens; a search returning 10 citations costs
+~300, and hydrating the 2 that mattered ~1,000.
+
+Three refusals worth knowing before you meet them:
+
+- **An index built by an older version is refused**, with the rebuild command
+  named. It has no headings, line ranges or generation, so it cannot produce a
+  citation — and reporting those as `unknown` would be a truthful label on an
+  answer you cannot use.
+- **Chunk ids are generation-scoped** (`a91f3c7d2e04:0187`). An id issued before
+  the last rebuild is refused, not resolved: the same ordinal now addresses a
+  different passage under the same path, and hydrating it would be confidently
+  wrong with no error anywhere.
+- **A missing embedding model is refused, never substituted.** Cosine over
+  vectors from two different models returns a complete, well-ordered,
+  meaningless ranking, and nothing downstream can detect it.
+
+Staleness is **reported, never estimated**. Responses carry `built_at` and name
+`vault_index.py status <name>` as the check. *"Probably current"* derived from a
+timestamp is a guess presented as a fact.
+
+#### Known limitation: reranking through MCP is bounded by your client's timeout
+
+**The tool cannot rerank as widely as the CLI can, and this is measured, not
+theoretical.** Two results stand against each other:
+
+| Measured | |
+|---|---|
+| **Pool 20 can miss the answer.** On one real query the answering passage sat at cosine rank 32 of 403 — outside the pool, so no reranker ever saw it. Pool 40 put it at rank 1 with nothing else changed | 2026-08-26 |
+| **Pool 40 exceeds an MCP client's request timeout**, with the model already warm — roughly 8 batches of 5 at ~8s each on a 20B reranker | 2026-08-30 |
+
+`index_search` therefore defaults to `pool=20`, because a default that always
+times out is worse than one that is occasionally short. **The shortfall is made
+visible rather than hidden:**
+
+- `reranked_by.distribution` shows the score spread, so *"nothing was judged a
+  direct answer"* is a fact you can see rather than infer
+- When only partial matches come back, the response says the pool may have been
+  too narrow and names the wider retry
+- `index_explain` tells you whether the passage you expected fell outside the
+  pool — a **recall** failure no reranker can fix — or merely ranked low
+
+**The CLI has no timeout.** For the measured-correct width, or wider:
+
+```bash
+.venv/bin/python vault_index.py search notes "your question" --rerank --rerank-pool 40
+```
+
+Reranking is also much cheaper warm: cold load on a 20B model measured 7.8–25.5s
+depending on residency, and Ollama evicts after about five minutes. Bursty use is
+far cheaper than intermittent use.
+
 ## Configuration
 
 | Variable | Default | Effect |
 |---|---|---|
 | `OLLAMA_HOST` | `http://localhost:11434` | Base URL. A bare `host:port` is accepted and gets `http://` prepended. |
+| `OLLAMA_MCP_INDEX_DIR` | unset | Directory of `<name>.index.json` files. **Unset means the four `index_*` tools are not registered at all.** Set, it is also the allowlist: only indexes in that directory are reachable. |
 | `OLLAMA_MCP_ALLOW_DELETE` | off | `1` permits `delete_model`. |
 | `OLLAMA_MCP_ALLOW_PULL` | off | `1` permits `pull_model`. Both write operations are off unless you turn them on. |
 | `OLLAMA_MCP_MODELS` | unset | Optional comma-separated model allowlist. Unset means any local model. |
