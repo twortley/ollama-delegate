@@ -50,6 +50,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # (file, find, replace, what it breaks)
 MUTANTS: list[tuple[str, str, str, str]] = [
+    # --- declared Python floor --------------------------------------------
+    ("ollama_server.py", "MIN_PYTHON = (3, 10)", "MIN_PYTHON = (3, 9)",
+     "let the two modules disagree about the declared floor"),
+    ("vault_index.py", "from __future__ import annotations",
+     "from __future__ import generator_stop",
+     "drop the future import that keeps the floor guard reachable"),
     # --- index identity ---------------------------------------------------
     ("vault_index.py", 'h.update(b"\\x00")', "pass",
      "drop the NUL separator in the generation hash"),
