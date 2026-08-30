@@ -58,6 +58,12 @@ ollama list
 If that prints a table, Ollama is reachable and you can see what you have. If it
 errors, fix that before going further — nothing below will work.
 
+**For `vault_index.py` you need an *embedding* model specifically**, which is not
+the same as having a chat model. If `ollama list` shows none:
+`ollama pull nomic-embed-text`.
+
+**Windows** — PowerShell:
+
 ```powershell
 cd C:\path\to\ollama-delegate
 python -m venv .venv
@@ -66,9 +72,32 @@ python -m venv .venv
 .\.venv\Scripts\python.exe ollama_server.py --probe
 ```
 
-`--selftest` asserts the guard behaviour and needs nothing running.
-`--probe` is the live check: it lists the models Ollama actually has, and tells
-you what is wrong if it cannot reach it.
+**macOS and Linux** — bash:
+
+```bash
+cd /path/to/ollama-delegate
+python3 -m venv .venv
+.venv/bin/python -m pip install mcp
+.venv/bin/python ollama_server.py --selftest
+.venv/bin/python ollama_server.py --probe
+```
+
+`--selftest` asserts the guard behaviour and needs nothing running — no Ollama, no
+network. `--probe` is the live check: it lists the models Ollama actually has, and
+tells you what is wrong if it cannot reach it.
+
+**Expect `pip install mcp` to install around thirty packages.** That is the MCP
+SDK's own dependency tree, not ours — **this project adds no dependencies of its
+own**, and talks to Ollama over stdlib `urllib`. See *Design notes*.
+
+### One path, stated once
+
+**Create the venv with `python3`; use it with `python`.** On macOS and Linux
+`python3` is the system interpreter — `python` often does not exist — but the
+venv's own `bin/` provides `python`, `python3` and a versioned name once created.
+
+**The rest of this document writes the interpreter as `.venv/bin/python`.**
+On Windows, that is `.\.venv\Scripts\python.exe` everywhere it appears.
 
 ## Wire it into your client
 
@@ -85,7 +114,7 @@ Add the server:
 ```json
 {
   "mcpServers": {
-    "ollama": {
+    "ollama-delegate": {
       "command": "C:\\path\\to\\ollama-delegate\\.venv\\Scripts\\python.exe",
       "args": ["C:\\path\\to\\ollama-delegate\\ollama_server.py"],
       "env": {
@@ -96,22 +125,54 @@ Add the server:
 }
 ```
 
-Double-backslash every path **on Windows**, absolute paths only, and restart
-Claude Desktop. A "running" tag next to the server name confirms it connected.
+On **macOS and Linux** the same block takes POSIX paths and no doubling:
 
-On macOS the same block applies with POSIX paths and no doubling —
-`/path/to/ollama-delegate/.venv/bin/python`.
+```json
+{
+  "mcpServers": {
+    "ollama-delegate": {
+      "command": "/path/to/ollama-delegate/.venv/bin/python",
+      "args": ["/path/to/ollama-delegate/ollama_server.py"],
+      "env": {
+        "OLLAMA_HOST": "http://localhost:11434"
+      }
+    }
+  }
+}
+```
 
-### Linux
+**Absolute paths only, on every platform** — the client spawns the server
+directly, with no shell and no predictable working directory, so nothing relative
+resolves. **Double-backslash every path on Windows.** Restart the client; a
+"running" tag next to the server name confirms it connected.
 
-**There is no official Claude Desktop build for Linux.** The supported route is
-**Claude Code**, which is a first-class MCP client — see its own documentation
-for registering a stdio server. Community repackages of the desktop app exist and
-read their config from `~/.config/Claude/claude_desktop_config.json`, but they
-are unofficial and carry the trust trade-offs of any repackaged binary.
+> **The key is `ollama-delegate`, not `ollama`.** A bare `ollama` collides with
+> any other Ollama MCP server a user installs, and a duplicate key in
+> `claude_desktop_config.json` fails at exactly the point a first-time user is
+> least able to diagnose it.
 
-The server itself is fully supported on Linux: `--selftest` and `--probe` need
-nothing but Python and a reachable Ollama. **Only the client wiring differs.**
+### Claude Desktop — Linux
+
+**Official, in beta since June 2026.** Download the `.deb` from
+[claude.com/download](https://claude.com/download); installing it also registers
+Anthropic's apt repository, so updates arrive with normal system updates.
+Officially tested on **Ubuntu 22.04+ and Debian 12+**, x86_64 and arm64.
+
+Config lives at `~/.config/Claude/claude_desktop_config.json` — the POSIX block
+above goes in unchanged.
+
+**Verified:** this server was installed from a clean clone and exercised through
+Claude Desktop on Ubuntu — `list_models`, `generate`, `embed` and `server_info`
+all behaved as documented.
+
+### Other clients
+
+The server is a plain stdio MCP server, so anything that speaks MCP can launch
+it. **Claude Code** is a first-class client and registers stdio servers through
+its own configuration.
+
+`--selftest` and `--probe` need nothing but Python and a reachable Ollama, on any
+platform. **Only the client wiring differs.**
 
 ## Local and cloud models both work — and you can tell them apart
 
@@ -231,9 +292,9 @@ markdown into a table of vectors; `search` queries that table.** The vectors sta
 this through tool calls would pull thousands of float arrays into its context and
 hit the limit almost immediately.
 
-```powershell
-.\.venv\Scripts\python.exe vault_index.py build "C:\path\to\your-notes" --out notes_index.json --rebuild
-.\.venv\Scripts\python.exe vault_index.py search notes_index.json "why did the GPUs slow down"
+```bash
+.venv/bin/python vault_index.py build /path/to/your-notes --out notes_index.json --rebuild
+.venv/bin/python vault_index.py search notes_index.json "why did the GPUs slow down"
 ```
 
 It reads the embedding model's real context limit rather than assuming one,
@@ -258,8 +319,8 @@ Cosine similarity measures topical overlap, not answerhood — a chunk about "th
 GPUs in this machine" scores as well as one explaining why they slowed down.
 `--rerank` has a local model judge the candidates instead.
 
-```powershell
-.\.venv\Scripts\python.exe vault_index.py search notes_index.json "why did the GPUs slow down" --rerank
+```bash
+.venv/bin/python vault_index.py search notes_index.json "why did the GPUs slow down" --rerank
 ```
 
 | Flag | Default | Notes |
