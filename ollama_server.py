@@ -59,6 +59,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 # --------------------------------------------------------------------------
@@ -78,6 +79,15 @@ log.propagate = False
 # --------------------------------------------------------------------------
 
 
+# This file is normally executed as a script, which means it is imported under
+# the name `__main__`. `index_tools` imports `ollama_server` for Guard and the
+# response helpers -- and without the alias below that import would EXECUTE THE
+# FILE A SECOND TIME, producing a second Refused class that `except Refused`
+# does not catch. Two module objects, identical source, silently different
+# identity. Registering the alias makes the later import resolve to this module.
+sys.modules.setdefault("ollama_server", sys.modules[__name__])
+
+
 def _env_flag(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
@@ -93,11 +103,19 @@ class Config:
     model_allowlist: tuple[str, ...] = field(default_factory=tuple)
     timeout: float = 300.0
     pull_timeout: float = 3600.0
+    # Directory of `<name>.index.json` files. Unset means the index_* tools are
+    # NOT REGISTERED AT ALL, so a default clone exposes exactly the nine-tool
+    # bridge the README documents. Setting it does three jobs at once: it opts
+    # the tools in, it is the allowlist (only indexes in here are reachable),
+    # and it answers "where does the index live" -- which the CLI previously
+    # left relative to a working directory an MCP client chooses.
+    index_dir: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
         raw_models = os.environ.get("OLLAMA_MCP_MODELS", "").strip()
         models = tuple(m.strip() for m in raw_models.split(",") if m.strip())
+        raw_index_dir = os.environ.get("OLLAMA_MCP_INDEX_DIR", "").strip()
         return cls(
             base_url=_normalise_base_url(
                 os.environ.get("OLLAMA_HOST", "http://localhost:11434")
@@ -107,6 +125,7 @@ class Config:
             model_allowlist=models,
             timeout=float(os.environ.get("OLLAMA_MCP_TIMEOUT", "300")),
             pull_timeout=float(os.environ.get("OLLAMA_MCP_PULL_TIMEOUT", "3600")),
+            index_dir=raw_index_dir or None,
         )
 
 
@@ -366,6 +385,26 @@ def _request(
         )
 
     return parsed
+
+
+def _retrieval_tools_note(config: Config) -> str:
+    """
+    What server_info says about the index_* tools, including when they are off.
+
+    A005, 2026-08-29: a diligent client reads server_info and never makes the
+    refused call, which makes this the load-bearing surface and the verdict
+    strings the backstop. An agent that cannot see the tools has no way to tell
+    "not configured on this host" from "not supported by this server", and
+    those have different remedies -- one is an environment variable, the other
+    is a different server.
+    """
+    if config.index_dir:
+        return (f"registered, reading {config.index_dir}. index_list, "
+                "index_search, index_get, index_explain.")
+    return ("not registered. Set OLLAMA_MCP_INDEX_DIR to a directory of "
+            "<name>.index.json files and restart the MCP client. Indexes are "
+            "built with the vault_index.py CLI; no tool builds one, and no "
+            "tool opens a corpus file.")
 
 
 def _ok(**kwargs: Any) -> dict[str, Any]:
@@ -1201,6 +1240,13 @@ def register(mcp: Any, config: Config) -> None:
             model_allowlist=list(config.model_allowlist) or "none (any local model)",
             timeout_s=config.timeout,
             pull_timeout_s=config.pull_timeout,
+            # A005, 2026-08-29: a diligent client reads server_info and never
+            # makes the refused call, which makes this the load-bearing surface
+            # and the verdict strings the backstop. So the index tools have to
+            # be described HERE, including when they are absent -- an agent that
+            # cannot see them has no way to tell "not configured" from "not
+            # supported by this server", and those have different remedies.
+            retrieval_tools=_retrieval_tools_note(config),
             note=(
                 "Content sent to a model whose `location` is \"local\" stays on "
                 "this host. Models tagged `:cloud` run on Ollama's hosted "
@@ -1619,6 +1665,521 @@ def selftest() -> int:
     check("no log handler writes to stdout", not stdout_handlers)
     check("logger does not propagate to root", log.propagate is False)
 
+    # ---------------------------------------------------------------------
+    # Retrieval tools. Registered only when OLLAMA_MCP_INDEX_DIR is set, so
+    # everything below builds a temporary index directory and a stubbed host.
+    # ---------------------------------------------------------------------
+    import io
+    import json as _json
+    import tempfile
+    from contextlib import redirect_stdout
+
+    import vault_index as vi
+    import index_tools
+
+    print("Retrieval: opt-in and configuration")
+    check(
+        "index_dir is None when the environment does not name one",
+        Config(index_dir=None).index_dir is None,
+    )
+    check(
+        "server_info says the tools are NOT registered when unset",
+        "not registered" in _retrieval_tools_note(Config()),
+    )
+    check(
+        "server_info names the directory when they are",
+        "/tmp/ix" in _retrieval_tools_note(Config(index_dir="/tmp/ix")),
+    )
+
+    print("Retrieval: index format")
+    check("a name with a separator is refused", not vi.NAME_RE.match("a/b"))
+    check("a name with a dot is refused", not vi.NAME_RE.match("a.b"))
+    check("traversal is not a name", not vi.NAME_RE.match("../etc"))
+    check("an ordinary name is accepted", bool(vi.NAME_RE.match("homelab_2")))
+
+    entries_a = [{"file": "a.md", "digest": "1111"},
+                 {"file": "b.md", "digest": "2222"}]
+    entries_b = [{"file": "a.md", "digest": "1111"},
+                 {"file": "b.md", "digest": "3333"}]
+    gen_a = vi.compute_generation("m", "d: ", "q: ", 1500, entries_a)
+    check(
+        "generation is stable for identical content",
+        gen_a == vi.compute_generation("m", "d: ", "q: ", 1500, entries_a),
+    )
+    check(
+        "generation changes when a file's digest changes",
+        gen_a != vi.compute_generation("m", "d: ", "q: ", 1500, entries_b),
+    )
+    check(
+        "generation changes when the embedding model changes",
+        gen_a != vi.compute_generation("other", "d: ", "q: ", 1500, entries_a),
+    )
+    check(
+        "generation changes when chunk size changes",
+        gen_a != vi.compute_generation("m", "d: ", "q: ", 800, entries_a),
+    )
+    # Without a separator between hashed fields, ("ab","c") and ("a","bc")
+    # collide -- the same read-across-a-seam mistake in a different medium.
+    check(
+        "field boundaries are hashed, not just the concatenation",
+        vi.compute_generation("m", "ab", "c", 1500, entries_a)
+        != vi.compute_generation("m", "a", "bc", 1500, entries_a),
+    )
+
+    print("Retrieval: chunk citations")
+    doc = ("# Alpha\n\n" + "a " * 50 + "\n\n## Beta\n\n" + "b " * 400 + "\n")
+    pieces = vi.chunk_text(doc, 300)
+    check("chunking returns citation fields, not bare strings",
+          all({"text", "heading", "lines"} <= set(p) for p in pieces))
+    check("a chunk opening the first section carries its heading",
+          pieces[0]["heading"] == "Alpha")
+    # A chunk that begins inside the second section must not still be labelled
+    # with the first. The heading is the one in force where the chunk STARTS,
+    # which for an overlapped chunk is where its tail starts, not where its
+    # first whole paragraph does.
+    check("a chunk starting inside the second section carries ITS heading",
+          any(p["heading"] == "Beta" for p in pieces))
+    check("no chunk claims a heading from after where it starts",
+          all(p["heading"] in ("", "Alpha", "Beta") for p in pieces))
+    check(
+        "cited lines contain the chunk's own last block",
+        all(p["text"].split("\n\n")[-1].strip()[:30]
+            in "\n".join(doc.splitlines()[p["lines"][0] - 1:p["lines"][1]])
+            for p in pieces),
+    )
+    # A `#` comment inside a fence is not a section title. Getting this wrong
+    # attaches a confident wrong heading to every chunk after it.
+    fenced = "# Real\n\n```python\n# not a heading\n```\n\ntail paragraph\n"
+    check("a comment inside a code fence is not read as a heading",
+          all(p["heading"] == "Real" for p in vi.chunk_text(fenced, 200)))
+
+    # A note with no blank line anywhere is ONE block. Citing the block for
+    # every slice of it gave `lines: [1, 204]` on a real 204-line file --
+    # a citation pointing at the whole document. Found 2026-08-30 by looking at
+    # actual output, not by any check that existed.
+    dense = "\n".join(f"line {n} of a note with no blank lines at all"
+                      for n in range(1, 121))
+    slices = vi.chunk_text(dense, 400)
+    check("a blank-line-free note still splits into several chunks",
+          len(slices) > 3)
+    check("each slice of one long block cites its OWN lines, not the block's",
+          len({tuple(p["lines"]) for p in slices}) == len(slices))
+    check("slice line ranges advance through the file",
+          all(a["lines"][0] <= b["lines"][0]
+              for a, b in zip(slices, slices[1:])))
+    check(
+        "a slice's cited first line really contains its opening words",
+        all(p["text"].split("\n")[0][-20:]
+            in dense.splitlines()[p["lines"][0] - 1]
+            for p in slices),
+    )
+    # Containment alone cannot catch an over-WIDE range: citing the whole block
+    # for every slice still "contains" each slice. Mutation testing found this
+    # -- the end of the range needs its own assertion, pinned to real text.
+    check(
+        "a slice's cited last line really contains its closing words",
+        all(p["text"].split("\n")[-1][:20]
+            in dense.splitlines()[p["lines"][1] - 1]
+            for p in slices),
+    )
+    # NOT "all ends are distinct" -- that was asserted and was false. Slices
+    # overlap, so the last two windows both clip to the end of the block and
+    # legitimately share an end line. The discrimination lives in the check
+    # above, which pins each end to real text; these two only bound the shape.
+    check("slice cited ends advance through the file",
+          all(a["lines"][1] <= b["lines"][1]
+              for a, b in zip(slices, slices[1:])))
+    check("slice cited ends are not all the same line",
+          len({p["lines"][1] for p in slices}) > 1)
+
+    # Platform-independent, and that is the point. Asserting this through a
+    # built index passes trivially on Linux, where str() already yields forward
+    # slashes -- an assertion that cannot fail in the environment that runs it.
+    from pathlib import PureWindowsPath
+    check(
+        "a Windows corpus path still keys the index with POSIX separators",
+        vi.relative_key(PureWindowsPath(r"D:\vault\INVENTORY\07 Models\Note.md"),
+                        PureWindowsPath(r"D:\vault"))
+        == "INVENTORY/07 Models/Note.md",
+    )
+
+    # The 2026-08-26 chunker, kept verbatim as a golden reference. Retrieval
+    # quality was tuned against this exact packing arithmetic -- prefixes, chunk
+    # size and overlap were all measured against its output -- so a change to it
+    # would show up as worse results months later with nothing to point at.
+    # Adding headings and line ranges was supposed to be pure bookkeeping; this
+    # is what says so.
+    import re as _re
+
+    def _v1_chunks(text: str, max_chars: int) -> list[str]:
+        paras = [p.strip() for p in _re.split(r"\n\s*\n", text) if p.strip()]
+        out: list[str] = []
+        current = ""
+        for para in paras:
+            if len(para) > max_chars:
+                if current:
+                    out.append(current)
+                    current = ""
+                step = max_chars - vi.CHUNK_OVERLAP
+                for i in range(0, len(para), step):
+                    piece = para[i:i + max_chars]
+                    if i > 0:
+                        cut = piece.find(" ")
+                        piece = piece[cut + 1:] if cut != -1 else piece
+                    out.append(piece)
+                continue
+            if len(current) + len(para) + 2 <= max_chars:
+                current = f"{current}\n\n{para}" if current else para
+            else:
+                out.append(current)
+                tail = (current[-vi.CHUNK_OVERLAP:]
+                        if len(current) > vi.CHUNK_OVERLAP else current)
+                if len(tail) < len(current):
+                    cut = tail.find(" ")
+                    tail = tail[cut + 1:] if cut != -1 else tail
+                current = f"{tail}\n\n{para}"
+        if current:
+            out.append(current)
+        return out
+
+    corpus_shapes = [
+        doc,
+        dense,
+        fenced,
+        "---\ntitle: t\n---\n\n# H\n\n" + ("word " * 900) + "\n\ntail\n",
+        "no headings at all\n\n" + "\n\n".join("para " * 40 for _ in range(8)),
+        "# CRLF\r\n\r\nfirst\r\n\r\n" + ("x" * 3000) + "\r\n",
+    ]
+    identical = all(
+        [c["text"] for c in vi.chunk_text(text, size)] == _v1_chunks(text, size)
+        for text in corpus_shapes
+        for size in (400, vi.TARGET_CHUNK_CHARS, 6553)
+    )
+    check("chunk TEXT is unchanged from the version retrieval was tuned on",
+          identical)
+
+    print("Retrieval: library half is safe inside a server process")
+    check("IndexerError is raised, not exited",
+          issubclass(vi.IndexerError, Exception)
+          and not issubclass(vi.IndexerError, SystemExit))
+    _saved_post = vi._post
+    try:
+        vi._post = lambda *a, **k: (_ for _ in ()).throw(
+            vi.IndexerError("stubbed unreachable", verdict="ollama_unreachable"))
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            vi.rerank("http://stub", "m", "q", [(0.5, "a.md", "text")], 1)
+        # stdout is the MCP protocol channel. One stray print corrupts the
+        # stream and surfaces as a client-side parse error nowhere near here.
+        check("rerank writes nothing to stdout", buf.getvalue() == "")
+    finally:
+        vi._post = _saved_post
+
+    print("Retrieval: build and status, end to end")
+    # A real build against a stubbed embedder. Everything above tests functions
+    # in isolation; the Windows path separators that reached a live index on
+    # 2026-08-30 were produced HERE, in the one step nothing exercised.
+    with tempfile.TemporaryDirectory() as tmp:
+        corpus = Path(tmp) / "corpus" / "sub dir"
+        corpus.mkdir(parents=True)
+        (corpus / "note.md").write_text(
+            "# Title\n\nsome prose about fans\n", encoding="utf-8")
+        indexes = Path(tmp) / "indexes"
+
+        def _build_stub(host, path, payload, timeout=300):
+            if path == "/api/show":
+                return {"model_info": {"nomic-bert.context_length": 2048},
+                        "parameters": "num_ctx 8192"}
+            if path == "/api/embed":
+                return {"embeddings": [[1.0, 0.0] for _ in payload["input"]]}
+            raise AssertionError(path)
+
+        vi._post = _build_stub
+        try:
+            class _Args:
+                folder = str(Path(tmp) / "corpus")
+                name = "built"
+                describe = "an end-to-end fixture"
+                model = vi.DEFAULT_MODEL
+                host = "http://stub"
+                batch = 16
+                chunk_chars = vi.TARGET_CHUNK_CHARS
+                rebuild = True
+                dir = str(indexes)
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                vi.build(_Args())
+            written = indexes / f"built{vi.INDEX_SUFFIX}"
+            check("build writes <name>.index.json into the index directory",
+                  written.exists())
+            body = _json.loads(written.read_text(encoding="utf-8"))
+            paths = [e["file"] for e in body["files"]]
+            # Weak on Linux by construction -- `relative_key` carries the real
+            # assertion. This one only confirms build() actually calls it.
+            check("build stores the normalised key it was given",
+                  paths == ["sub dir/note.md"])
+            check("the header records where it was built from",
+                  body["source_root"] == str(Path(tmp) / "corpus"))
+            check("the header records the description it was given",
+                  body["description"] == "an end-to-end fixture")
+            check("counts in the header match the body",
+                  body["file_count"] == len(body["files"])
+                  and body["chunk_count"] == sum(len(e["chunks"])
+                                                 for e in body["files"]))
+
+            _Args.index = "built"
+            with redirect_stdout(buf):
+                vi.status(_Args())          # clean: returns, does not exit
+            check("status on an unchanged corpus does not signal drift", True)
+
+            (corpus / "another.md").write_text("# New\n\nmore\n", encoding="utf-8")
+            try:
+                with redirect_stdout(buf):
+                    vi.status(_Args())
+                check("status exits non-zero once the corpus has drifted", False)
+            except SystemExit as exc:
+                check("status exits non-zero once the corpus has drifted",
+                      exc.code == 1)
+            check("status names the file that appeared",
+                  "another.md" in buf.getvalue())
+        finally:
+            vi._post = _saved_post
+
+    print("Retrieval: the four tools")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+
+        def _chunk(text, lines, heading, vector):
+            return {"text": text, "heading": heading, "lines": lines,
+                    "vector": vector}
+
+        good = {
+            "format": vi.INDEX_FORMAT, "name": "fixture",
+            "description": "a fixture corpus", "source_root": tmp,
+            "built_at": "2026-08-30T09:00:00-04:00",
+            "builder_version": vi.BUILDER_VERSION, "generation": "abc123",
+            "model": "nomic-embed-text:latest",
+            "doc_prefix": "search_document: ", "query_prefix": "search_query: ",
+            "chunk_chars": 1500, "dimensions": 4,
+            "file_count": 2, "chunk_count": 3,
+            "files": [
+                {"file": "notes/why.md", "digest": "aaaa", "chunks": [
+                    _chunk("the fans spin down when the room is cold",
+                           [4, 9], "Thermals", [1.0, 0.0, 0.0, 0.0]),
+                    _chunk("x" * 70_000, [11, 20], "Big", [0.9, 0.1, 0.0, 0.0]),
+                ]},
+                {"file": "notes/other.md", "digest": "bbbb", "chunks": [
+                    _chunk("unrelated inventory listing",
+                           [1, 3], "Inventory", [0.0, 1.0, 0.0, 0.0]),
+                ]},
+            ],
+        }
+        (tmp_path / f"fixture{vi.INDEX_SUFFIX}").write_text(
+            _json.dumps(good), encoding="utf-8")
+        # A v1 index: no format, no headings, no line ranges, no generation.
+        (tmp_path / f"legacy{vi.INDEX_SUFFIX}").write_text(_json.dumps({
+            "model": "nomic-embed-text:latest", "query_prefix": "search_query: ",
+            "files": [{"file": "a.md", "digest": "c", "chunks": [
+                {"text": "old", "vector": [1.0, 0.0, 0.0, 0.0]}]}],
+        }), encoding="utf-8")
+
+        reg: dict[str, Any] = {}
+
+        class _FakeMCP:
+            def tool(self):
+                def d(f):
+                    reg[f.__name__] = f
+                    return f
+                return d
+
+        installed = {"ok": True}
+        # The stub reranker promotes the candidate the embeddings ranked LAST.
+        # Agreeing with embedding order would make the assertion below unable
+        # to fail -- it would pass just as well if the reranked order were
+        # thrown away, which is exactly the mutation that has to be caught.
+        chat_reply = {"message": {"content": "0=0\n1=0\n2=2"}}
+
+        def _stub_post(host, path, payload, timeout=300):
+            if path == "/api/show":
+                return {} if installed["ok"] else {"error": "model not found"}
+            if path == "/api/embed":
+                return {"embeddings": [[1.0, 0.0, 0.0, 0.0]
+                                       for _ in payload["input"]]}
+            if path == "/api/chat":
+                return chat_reply
+            raise AssertionError(f"unexpected path {path}")
+
+        vi._post = _stub_post
+        try:
+            index_tools._CACHE.update(key=None, index=None)
+            index_tools.register(_FakeMCP(), Config(index_dir=tmp))
+            check("four index_* tools registered",
+                  {"index_list", "index_search", "index_get",
+                   "index_explain"} <= set(reg))
+
+            listed = reg["index_list"]()
+            names = [i["name"] for i in listed["indexes"]]
+            check("index_list reports the readable index", names == ["fixture"])
+            check("index_list reads the description from the header",
+                  listed["indexes"][0]["description"] == "a fixture corpus")
+            check("a v1 index is named as unreadable, not silently skipped",
+                  [u["name"] for u in listed["unreadable"]] == ["legacy"])
+            check("the v1 refusal verdict is unsupported_index",
+                  listed["unreadable"][0]["verdict"] == "unsupported_index")
+            check("the v1 refusal names the rebuild command",
+                  "vault_index.py build" in listed["unreadable"][0]["remedy"])
+
+            hit = reg["index_search"]("fixture", "why do the fans spin down",
+                                      k=2, rerank=False)
+            check("search succeeds", hit["verdict"] == "ok")
+            check("results carry a generation-scoped id",
+                  hit["results"][0]["id"] == "abc123:0000")
+            check("results carry a line range",
+                  hit["results"][0]["lines"] == [4, 9])
+            check("results carry the nearest heading",
+                  hit["results"][0]["heading"] == "Thermals")
+            # The load-bearing decision: citations, not content. A `text` field
+            # here would make k a context-budget decision taken before anything
+            # is known about relevance.
+            check("results carry NO chunk text",
+                  all("text" not in r for r in hit["results"]))
+            check("the response reports built_at",
+                  hit["built_at"] == "2026-08-30T09:00:00-04:00")
+            check("staleness is pointed at the CLI, not estimated",
+                  "vault_index.py status fixture" in hit["note"])
+
+            check("k above the cap is refused",
+                  reg["index_search"]("fixture", "q", k=999)["verdict"]
+                  == "invalid_request")
+            check("k below 1 is refused",
+                  reg["index_search"]("fixture", "q", k=0)["verdict"]
+                  == "invalid_request")
+            check("a traversal name is refused as an invalid name",
+                  reg["index_search"]("../etc/passwd", "q")["verdict"]
+                  == "invalid_request")
+            check("an unknown index is not found, not crashed",
+                  reg["index_search"]("nosuch", "q")["verdict"]
+                  == "index_not_found")
+
+            reranked = reg["index_search"]("fixture", "why do the fans spin "
+                                           "down", k=2, rerank=True,
+                                           rerank_model="stub-ranker")
+            check("reranking reports which model judged, and where it ran",
+                  reranked["reranked_by"]["model"] == "stub-ranker"
+                  and reranked["reranked_by"]["location"] == "local")
+            # The pool holds 3 and k is 2. Computing `judged` from the returned
+            # rows capped it at k and reported "2 of 3" when the model scored
+            # all three -- a participation figure that could not tell the truth.
+            check("judged counts the whole pool, not the truncated result",
+                  reranked["reranked_by"]["judged"] == 3
+                  and reranked["reranked_by"]["of_pool"] == 3)
+            check("the score distribution is reported, not just a count",
+                  reranked["reranked_by"]["distribution"] == {"2": 1, "0": 2})
+            check("a well-spread rerank is NOT flagged as weak",
+                  "weak_discrimination" not in reranked["reranked_by"])
+            # Saturation is the failure that looks like success: gemma3:4b
+            # scored ~45% of candidates as direct answers, so the ties fell
+            # through to the cosine tiebreak and the output was embedding order
+            # wearing confident labels. It needs its own fixture -- one top
+            # score out of three is correct behaviour, not saturation.
+            chat_reply["message"] = {"content": "0=2\n1=2\n2=2"}
+            saturated = reg["index_search"]("fixture", "q", k=2, rerank=True,
+                                            rerank_model="stub-ranker")
+            check("a reranker that scores everything alike is called out",
+                  "unreranked" in
+                  saturated["reranked_by"]["weak_discrimination"])
+            check("saturation is visible in the distribution too",
+                  saturated["reranked_by"]["distribution"] == {"2": 3})
+            chat_reply["message"] = {"content": "0=0\n1=0\n2=2"}
+            check("the default pool is one that completes within a client timeout",
+                  index_tools.RERANK_POOL == 20)
+            # A rerank with partial matches and no direct answer is the shape of
+            # a pool cut too narrow. Presenting the partials as the best
+            # available answer, silently, is the failure -- pool 20 is a
+            # measured compromise and has to admit when it may have been short.
+            chat_reply["message"] = {"content": "0=1\n1=1\n2=0"}
+            short = reg["index_search"]("fixture", "q", k=2, rerank=True,
+                                        rerank_model="stub-ranker")
+            check("partial-only results warn that the pool may be short",
+                  "pool_may_be_short" in short["reranked_by"])
+            check("the warning names a wider pool AND the CLI escape",
+                  "pool=6" in short["reranked_by"]["pool_may_be_short"]
+                  and "--rerank-pool" in short["reranked_by"]["pool_may_be_short"])
+            chat_reply["message"] = {"content": "0=0\n1=0\n2=2"}
+            found = reg["index_search"]("fixture", "q", k=2, rerank=True,
+                                        rerank_model="stub-ranker")
+            check("a direct answer does NOT trigger the pool warning",
+                  "pool_may_be_short" not in found["reranked_by"])
+            check("an out-of-range pool is refused",
+                  reg["index_search"]("fixture", "q", pool=999)["verdict"]
+                  == "invalid_request")
+            narrowed = reg["index_search"]("fixture", "q", k=2, rerank=True,
+                                           rerank_model="stub-ranker", pool=1)
+            check("a narrowed pool really reaches the reranker",
+                  narrowed["reranked_by"]["of_pool"] == 1)
+            check("the reranker's order wins over the embedding order",
+                  reranked["results"][0]["id"] == "abc123:0002")
+            # The citation must follow the chunk through the re-ordering. This
+            # is the one that would break silently: a plausible path with the
+            # wrong line range is indistinguishable from a correct one.
+            check("a reranked citation still resolves to its own chunk",
+                  reranked["results"][0]["path"] == "notes/other.md"
+                  and reranked["results"][0]["lines"] == [1, 3])
+            check("the reranker's score is reported alongside the citation",
+                  reranked["results"][0]["rerank"] == 2.0)
+
+            got = reg["index_get"]("fixture", ["abc123:0000"])
+            check("index_get hydrates from the index",
+                  got["chunks"][0]["text"].startswith("the fans spin down"))
+            check("hydrated chunks carry their citation too",
+                  got["chunks"][0]["lines"] == [4, 9])
+
+            stale = reg["index_get"]("fixture", ["999999:0000"])
+            check("an id from another generation is REFUSED",
+                  stale["verdict"] == "stale_id")
+            check("the stale-id refusal says what to do",
+                  "index_search" in stale.get("remedy", ""))
+            check("a malformed id is an invalid request, not a stale one",
+                  reg["index_get"]("fixture", ["nonsense"])["verdict"]
+                  == "invalid_request")
+            check("an id past the end of the index is reported, not invented",
+                  reg["index_get"]("fixture", ["abc123:0099"])
+                  .get("not_in_index") == ["abc123:0099"])
+
+            big = reg["index_get"]("fixture", ["abc123:0000", "abc123:0001"])
+            check("an oversized hydration is capped",
+                  big.get("omitted_for_size") == ["abc123:0001"])
+            check("the cap is reported rather than silently applied",
+                  "second call" in big.get("note", ""))
+
+            ranking = reg["index_explain"]("fixture", "fans",
+                                           "fans spin down")
+            check("explain finds an indexed phrase",
+                  ranking["hits"][0]["rank"] == 1)
+            # Rank 1 is NOT a failure. Calling it a ranking failure was this
+            # tool diagnosing a condition that was not present -- the exact
+            # shape of error it exists to catch. Seen on the real corpus
+            # 2026-08-30, after the selftest had passed.
+            check("a passage already at rank 1 is diagnosed as no failure",
+                  ranking["diagnosis"] == "no_failure")
+            check("the no-failure explanation does not claim a problem",
+                  "needs fixing" in ranking["explanation"])
+            absent = reg["index_explain"]("fixture", "fans", "no such phrase")
+            check("a phrase that is not indexed is diagnosed as recall",
+                  absent["diagnosis"] == "recall_failure_or_not_indexed")
+
+            installed["ok"] = False
+            index_tools._CACHE.update(key=None, index=None)
+            refused = reg["index_search"]("fixture", "q", rerank=False)
+            check("a missing embedding model is REFUSED, not substituted",
+                  refused["verdict"] == "model_not_found")
+            check("the refusal names the model to install",
+                  "nomic-embed-text" in refused.get("remedy", ""))
+        finally:
+            vi._post = _saved_post
+            index_tools._CACHE.update(key=None, index=None)
+
     print("Unreachable host is distinguishable from a missing model")
     dead = Config(base_url="http://127.0.0.1:1", timeout=2.0)
     try:
@@ -1702,6 +2263,15 @@ def build_server() -> tuple[Any, Config]:
     config = Config.from_env()
     mcp = ServerClass("ollama")
     register(mcp, config)
+
+    # Opt-in, and the import is inside the branch on purpose: an unset
+    # OLLAMA_MCP_INDEX_DIR means the retrieval module is never even loaded, so
+    # "the default clone exposes nine tools" is a fact about what runs rather
+    # than a promise about what is registered.
+    if config.index_dir:
+        import index_tools
+
+        index_tools.register(mcp, config)
     return mcp, config
 
 
