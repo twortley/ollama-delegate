@@ -79,6 +79,21 @@ log.propagate = False
 # --------------------------------------------------------------------------
 
 
+# Declared minimum supported interpreter. Checked at runtime rather than left to
+# fail on its own, because the natural failure is a SyntaxError or an ImportError
+# from somewhere inside the file, which tells a user nothing about what to do.
+#
+# This check can only speak if the file PARSES, so the codebase deliberately uses
+# no 3.10-only syntax: no `match`/`case`, no PEP 604 unions outside annotations,
+# and `from __future__ import annotations` in every module.
+MIN_PYTHON = (3, 10)
+if sys.version_info < MIN_PYTHON:
+    raise SystemExit(
+        f"ollama-delegate requires Python {'.'.join(map(str, MIN_PYTHON))} or "
+        f"newer. This interpreter is {sys.version.split()[0]} "
+        f"({sys.executable}).")
+
+
 # This file is normally executed as a script, which means it is imported under
 # the name `__main__`. `index_tools` imports `ollama_server` for Guard and the
 # response helpers -- and without the alias below that import would EXECUTE THE
@@ -1676,6 +1691,34 @@ def selftest() -> int:
 
     import vault_index as vi
     import index_tools
+
+    print("Declared Python floor")
+    check("a minimum interpreter version is declared", MIN_PYTHON == (3, 10))
+    check(
+        "vault_index declares the same floor, not a second opinion",
+        vi.MIN_PYTHON == MIN_PYTHON,
+    )
+    # The check is worthless if the file cannot parse on the version it refuses.
+    # No `match`/`case`, no PEP 604 outside annotations, and every module carries
+    # `from __future__ import annotations` so the guard can actually speak.
+    _sources = [Path(__file__).parent / n for n in
+                ("ollama_server.py", "vault_index.py", "index_tools.py")]
+    _texts = [p.read_text(encoding="utf-8") for p in _sources if p.exists()]
+    check("all three modules were found to inspect", len(_texts) == 3)
+    check(
+        "every module defers annotation evaluation, keeping the floor reachable",
+        all("from __future__ import annotations" in t for t in _texts),
+    )
+    check(
+        "no match/case statement, which would break before the guard runs",
+        not any(line.strip().startswith(("match ", "case "))
+                and line.rstrip().endswith(":")
+                for t in _texts for line in t.splitlines()),
+    )
+    check(
+        "the running interpreter satisfies the declared floor",
+        sys.version_info >= MIN_PYTHON,
+    )
 
     print("Retrieval: opt-in and configuration")
     check(

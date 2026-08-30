@@ -48,6 +48,16 @@ that supports skills.**
 
 ## Install
 
+**Python 3.10 or newer**, and one dependency — the MCP SDK. Both entry points
+check the interpreter version at startup and refuse with a named message rather
+than failing somewhere inside a file.
+
+> **Tested on 3.10, 3.12 and 3.14; not tested on 3.11, and there is no CI
+> matrix.** 3.10 is the *supported* floor, which is a support commitment rather
+> than a measurement — see `docs/DESIGN.md` §14.4 for what was run on which
+> version and how recently. Stated because a floor whose evidence is unstated is
+> a claim waiting to fail when someone checks it.
+
 Ollama must already be running (`ollama serve`, default `http://localhost:11434`)
 with at least one model pulled. **Check both in one command:**
 

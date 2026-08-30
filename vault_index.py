@@ -71,6 +71,15 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Declared minimum supported interpreter. See ollama_server.py for why this is
+# a runtime check and why the codebase avoids 3.10-only syntax.
+MIN_PYTHON = (3, 10)
+if sys.version_info < MIN_PYTHON:
+    raise SystemExit(
+        f"vault_index.py requires Python {'.'.join(map(str, MIN_PYTHON))} or "
+        f"newer. This interpreter is {sys.version.split()[0]} "
+        f"({sys.executable}).")
+
 DEFAULT_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 DEFAULT_MODEL = "nomic-embed-text:latest"
 

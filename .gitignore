@@ -25,6 +25,12 @@ desktop.ini
 #
 # Scoped to the repo root, not `**`, so that example or fixture JSON in a
 # subdirectory is still trackable rather than silently disappearing.
+#
+# ⚠️ BUT IT SWALLOWS ANY ROOT-LEVEL JSON, SILENTLY. On 2026-08-30 a verification
+# register written to the repo root was invisible to `git status` and nothing
+# said so -- `git check-ignore -v <file>` is what found it. Before adding any
+# root-level .json, run that. Anything meant to be tracked belongs in a
+# subdirectory or needs an explicit negation below.
 /*.json
 # A built index contains the corpus, verbatim, in its chunk text. `/*.json`
 # only covers the repository root; an index directory pointed anywhere inside

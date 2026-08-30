@@ -1,3 +1,14 @@
+# Python 3.10 or newer.
+#
+# DECLARED, and only partly tested — the distinction is deliberate and the
+# evidence is in docs/DESIGN.md §14.4. Both entry points check this at runtime
+# and refuse with a named message, because the alternative is a SyntaxError from
+# somewhere inside a file, which tells a user nothing.
+#
+# This file is a requirements list, not package metadata: there is no
+# pyproject.toml and no `requires-python`, so pip will NOT enforce the floor.
+# The runtime check is the enforcement.
+#
 # Dependencies.
 #
 # This file records WHAT FORCED each dependency, not merely what is installed,
