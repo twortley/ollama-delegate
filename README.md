@@ -46,11 +46,36 @@ not care what is on the other end. The companion skill is not: it is written for
 Anthropic's clients. **Use the server with any MCP client; the skill needs one
 that supports skills.**
 
-## Install
+## Prerequisites
 
-**Python 3.10 or newer**, and one dependency — the MCP SDK. Both entry points
-check the interpreter version at startup and refuse with a named message rather
-than failing somewhere inside a file.
+Four things. Each has one command that proves you have it, so you can find out
+now rather than halfway through a stack trace:
+
+| You need | Prove it | If it is missing |
+|---|---|---|
+| **Python 3.10 or newer** | `python --version` | python.org, or your package manager |
+| **Git** | `git --version` | git-scm.com — needed only to obtain the code |
+| **Ollama running** | `ollama list` | ollama.com |
+| **A working embedding model** | `vault_index.py build` completes | `ollama pull nomic-embed-text` — required for `vault_index.py` and the `index_*` tools |
+| **A working reasoning model** | it answers inside your client's timeout | `ollama pull llama3.1:8b` or similar — required for `generate`, `chat` and `--rerank` |
+
+**Installing Python and Ollama is out of scope for this project.** Both have
+their own installers and their own documentation, and duplicating them here would
+only rot. What this server owes you is a clear, named message when either is
+absent — not a tutorial. **How fast Ollama runs a given model on your hardware is
+likewise Ollama's business, not this server's.**
+
+**"Working" means more than installed.** A model that is pulled but too large for
+the machine will load and never return inside a client's timeout. **The two
+capabilities are independent, and modest hardware often has one without the
+other**: embedding a corpus with `nomic-embed-text` is cheap and succeeds widely,
+while a reasoning model large enough to rerank well may not complete at all on
+the same host. Reranking is optional — `index_search` falls back to cosine order
+and reports that it did, in `reranked_by`.
+
+**On Python**, both entry points check the interpreter version at startup and
+refuse with a named message, rather than failing somewhere inside a file with a
+`SyntaxError` that tells you nothing.
 
 > **Tested on 3.10, 3.12 and 3.14; not tested on 3.11, and there is no CI
 > matrix.** 3.10 is the *supported* floor, which is a support commitment rather
@@ -58,19 +83,25 @@ than failing somewhere inside a file.
 > version and how recently. Stated because a floor whose evidence is unstated is
 > a claim waiting to fail when someone checks it.
 
-Ollama must already be running (`ollama serve`, default `http://localhost:11434`)
-with at least one model pulled. **Check both in one command:**
+**On Ollama**, `ollama list` checks reachability and inventory together: if it
+prints a table, the daemon is up (`ollama serve`, default
+`http://localhost:11434`) and you can see what you have. If it errors, fix that
+first — nothing below will work.
 
+**An embedding model is not the same as a chat model.** `vault_index.py` needs
+one specifically, and having `llama3.1:8b` does not give you one.
+
+## Install
+
+### Get the code
+
+```bash
+git clone <repository-url> ollama-delegate
+cd ollama-delegate
 ```
-ollama list
-```
 
-If that prints a table, Ollama is reachable and you can see what you have. If it
-errors, fix that before going further — nothing below will work.
-
-**For `vault_index.py` you need an *embedding* model specifically**, which is not
-the same as having a chat model. If `ollama list` shows none:
-`ollama pull nomic-embed-text`.
+**Clone onto local storage.** A path that resolves to a network share will appear
+to work and will operate on the wrong machine.
 
 **Windows** — PowerShell:
 
@@ -108,6 +139,13 @@ venv's own `bin/` provides `python`, `python3` and a versioned name once created
 
 **The rest of this document writes the interpreter as `.venv/bin/python`.**
 On Windows, that is `.\.venv\Scripts\python.exe` everywhere it appears.
+
+**Environment variables do not translate the same way.** Where a bash example
+reads `export NAME=value`, PowerShell is `$env:NAME = "value"` — a different
+keyword, not a different path separator. `export` is not a PowerShell command and
+fails with `CommandNotFoundException`. The one variable this project uses,
+`OLLAMA_MCP_INDEX_DIR`, is shown in both forms where it is introduced; `--dir`
+works on either platform and avoids the question entirely.
 
 ## Wire it into your client
 
@@ -302,6 +340,8 @@ markdown into a table of vectors; `search` queries that table.** The vectors sta
 this through tool calls would pull thousands of float arrays into its context and
 hit the limit almost immediately.
 
+**macOS and Linux** — bash:
+
 ```bash
 export OLLAMA_MCP_INDEX_DIR=~/.ollama-delegate/indexes
 
@@ -310,6 +350,22 @@ export OLLAMA_MCP_INDEX_DIR=~/.ollama-delegate/indexes
 .venv/bin/python vault_index.py search notes "why did the GPUs slow down"
 .venv/bin/python vault_index.py status notes
 ```
+
+**Windows** — PowerShell. Note `$env:` rather than `export`, and that the
+variable must be set in the same session that runs the script:
+
+```powershell
+$env:OLLAMA_MCP_INDEX_DIR = "$HOME\.ollama-delegate\indexes"
+
+.\.venv\Scripts\python.exe vault_index.py build C:\path\to\your-notes `
+    --name notes --describe "engineering notes and runbooks" --rebuild
+.\.venv\Scripts\python.exe vault_index.py search notes "why did the GPUs slow down"
+.\.venv\Scripts\python.exe vault_index.py status notes
+```
+
+**Setting it in your shell does not set it for your MCP client.** The client
+launches the server itself, so the variable belongs in that client's own
+environment block — see *Wiring it into a client* below.
 
 **An index is named, not located.** Indexes are written as
 `<name>.index.json` into `$OLLAMA_MCP_INDEX_DIR` (or `--dir`), and `<name>` is
@@ -438,7 +494,18 @@ visible rather than hidden:**
 - `index_explain` tells you whether the passage you expected fell outside the
   pool — a **recall** failure no reranker can fix — or merely ranked low
 
-**The CLI has no timeout.** For the measured-correct width, or wider:
+**The CLI is not bounded by your client's timeout — but it is not unbounded.**
+Each scoring batch has its own **120-second** limit, and exceeding it now
+returns a stated cause and a remedy rather than a stack trace. On a machine that
+cannot run the reranking model comfortably, expect to hit it: drop `--rerank`,
+narrow the pool, or choose a smaller model.
+
+> **This paragraph read "The CLI has no timeout" until 2026-08-31.** It was
+> false, and it was load-bearing: the pool warning sent operators to the CLI
+> *because* of that claim, where an uncaught `TimeoutError` then crashed. A
+> remedy that relocates the failure is worse than no remedy.
+
+For the measured-correct width, or wider:
 
 ```bash
 .venv/bin/python vault_index.py search notes "your question" --rerank --rerank-pool 40

@@ -106,8 +106,94 @@ criterion that names no environment capable of running it is not a criterion.
 |---|---|---|
 | **ENV-1** | Windows 11 Pro 25H2 · Ollama 0.33.2 · **Python 3.14.4** · Claude Desktop | The main development machine and test bed. Most verification was executed here |
 | **ENV-2** | Ubuntu 24.04.4 · Ollama 0.30.6 · **Python 3.12.3** · Claude Desktop | Verification against a clean Ubuntu target |
-| **ENV-3** | A second MCP client, to be determined | Tool enumeration and response handling outside Claude Desktop |
+| **ENV-3** | **A second MCP client — a non-Claude agentic IDE**, on the same Windows host and Ollama instance as `ENV-1` | Tool enumeration and response handling outside Claude Desktop |
 | **ENV-4** | Unit-test environment · Linux container · **Python 3.10.12** · **no Ollama reachable** · no MCP client | **The declared floor interpreter.** Unit and static verification: `--selftest`, `mutation_check.py`, source inspection |
+| **ENV-5** | **A Windows workstation that is not the development host** · **Python 3.14** and Ollama both already present · a chat-model roster but **no embedding model** · **embeds fine, cannot carry a reranker** · no prior copy of this project | The install path followed by a reader who already meets the prerequisites: obtain the code, venv, dependency, `--selftest`, `--probe`, client wiring |
+
+> **`ENV-3` assigned 2026-08-31**, having been *"to be determined"* since this
+> document was written. Same `mcpServers` entry shape as `ENV-1`; connected first
+> attempt.
+>
+> **Deliberately not another Claude client.** A Claude-based one refuses
+> destructive actions on its own policy regardless of our gate — `VT-031` Arm B
+> showed exactly that, which tests the client rather than us.
+>
+> **Evidenced, not merely connected.** `VT-040` enumeration and `location` on all
+> 18 models · `VT-041` a real model call, 768 dimensions, `location: local` ·
+> **`VT-014` the refusal path — `not_permitted` reached and shown to the
+> operator through a non-Claude client.**
+>
+> 🔴 **And it found what only this environment could.** Refused by the tool, the
+> client ran `ollama rm` in a shell. The operator declined it; **nothing in this
+> system would have.** It also displayed our remedy telling a Gemini user to
+> *"restart Claude Desktop"*. See Threat 4; the remedy wording is tracked as a
+> defect.
+
+> **`ENV-5` is the first environment that is not the development host.** `ENV-1`
+> and `ENV-2` both had this project's own venv in place before any test began, so
+> every install run so far started part-way through the instructions. **`ENV-5`
+> had no copy of this project at all** — it exercises obtaining the code, venv
+> creation, dependency resolution, `--selftest`, `--probe` and client wiring as
+> one uninterrupted sequence.
+>
+> **It resolved the dependency independently.** A fresh install there pulled
+> **`mcp` 2.1.1**, a different SDK generation from `ENV-1`'s, in 29 packages —
+> against the README's stated expectation of "around thirty". `requirements.txt`
+> leaves `mcp` unpinned on the grounds that both SDK generations are tolerated in
+> source; **until this run that was an assertion**, and it is now a measurement
+> taken against the version a new reader actually gets.
+>
+> **It also exercised the embedding-model precondition for real.** No embedding
+> model was installed, the `embed` call failed as the README predicts, and
+> `ollama pull nomic-embed-text` fixed it — the one prerequisite in the list that
+> was genuinely absent.
+>
+> 🔴 **This row was corrected on 2026-08-31.** It previously specified a machine
+> with **no Ollama, no Python and no models**, and named hardware — 16 GB shared
+> memory, integrated GPU — that the machine used does not have. The machine
+> actually used had Python 3.14 and Ollama already installed. **A published
+> environment description that does not match the machine is a claim that fails
+> when checked**, which is this project's stated risk basis, so the row now
+> describes what was run rather than what was planned.
+>
+> **Installing Python and Ollama is out of scope, and their absence here is not a
+> coverage gap.** Both have their own installers; what this project owes is a
+> named refusal when either is missing, which the `Declared Python floor` group
+> and `verdict is ollama_unreachable` already assert. Listing them as untested
+> environments was manufacturing a gap to make a matrix look complete.
+>
+> 🔴 **Correction, later the same day: `ENV-5` did falsify the performance
+> guidance, and this note previously said it could not.** The paragraph here read
+> *"the performance falsifier is unmet, and now has no home"*. That was written
+> before the retrieval tools were exercised on the host, and it was wrong.
+>
+> ⚠️ **`ENV-5` is an embedding host, not an inference host.** Ollama runs there
+> and `nomic-embed-text` embedded a 33-chunk corpus without complaint, but
+> **reranking does not complete**: the default `gpt-oss:20b` is not installed,
+> and `qwen2.5:7b` did not return inside the client's timeout. Searches on that
+> host run on cosine alone.
+>
+> **That is guidance, not a defect.** Every timing in this project — cold load,
+> rerank duration, the client-timeout limitation — was measured on a fast
+> unified-memory desktop or a box with datacentre cards, and the manual has so
+> far said nothing about hardware that cannot carry a reranker at all.
+> **"Embeds, but cannot rerank" is a real class of target machine**, and
+> `--rerank-pool` on the CLI, which has no client timeout, is the escape the tool
+> already provides.
+>
+> **The cosine fallback is normal behaviour, not a failure of anything.** How
+> fast Ollama runs a given model on given hardware is outside this project's
+> scope; reranking is optional by design, and a host that cannot afford it gets
+> embedding order instead. What this project owns is only the *reporting* of it —
+> `reranked_by.failures` carried the timeout, so the caller was told the order
+> was unreranked rather than being handed cosine order dressed as a judged one.
+> Given how often this project has been caught by output that looked healthy and
+> was wrong, that the instrumentation said so out loud is the result worth
+> recording.
+>
+> **Still unfalsified:** the *timings* themselves. `ENV-5` establishes that a
+> modest host cannot rerank; it does not give the manual a number for how long
+> anything takes on one.
 
 > **`ENV-4` is where the floor is exercised.** Python 3.10.12 at the time of
 > build and test, 2026-08-30 — the only environment in this set that runs the
@@ -131,7 +217,7 @@ criterion that names no environment capable of running it is not a criterion.
 
 | ID | Requirement | Cls | Risk | Acceptance criterion — what we run | M | Status |
 |---|---|---|---|---|---|---|
-| **UR-01** | The operator **shall be able to** install and run the system by following documented instructions, without editing source | M | **H** | On a clean container and on the Ubuntu host, follow the manual verbatim; the server starts and enumerates its tools. **No step requires a value not printed in the manual.** ⚠️ **Failed twice on `ENV-2` 2026-08-29** — interpreter path, then `python.exe` surviving into a POSIX client config. Both fixes written, **neither re-proven** | D | ❌ |
+| **UR-01** | The operator **shall be able to** install and run the system by following documented instructions, without editing source | M | **H** | On a clean container and on the Ubuntu host, follow the manual verbatim; the server starts and enumerates its tools. **No step requires a value not printed in the manual.** ⚠️ **Failed twice on `ENV-2` 2026-08-29** — interpreter path, then `python.exe` surviving into a POSIX client config. Both fixes written, **neither re-proven** | D | ✅ |
 | **UR-02** | The operator **shall be able to** confirm a correct installation without reading source code | M | **H** | On that same clean environment, `--selftest` exits 0 and `--probe` names the reachable host and lists installed models. Both are reachable from the manual's install section. **Met on `ENV-2` 2026-08-29: clean clone, both checks correct, no hand remediation** | T | ✅ |
 | **UR-03** | The operator **shall be able to** configure model access, write permissions and index location without editing code | M | M | Each `OLLAMA_MCP_*` variable changes the permitted operation set, and `server_info` reports the change. No source file is touched. **The documented config example names every variable at its default**, so their existence is discoverable without reading source | T | ◐ |
 | **UR-04** | The operator **shall be able to** determine, for any call, whether content left their machine | M | **H** | Every inference response carries `location`. A `:cloud`-tagged model returns `cloud`; a local model returns `local`. **Exercised on `ENV-2` through a live client: 4 local / 2 cloud split correctly, and the agent volunteered *"the text never left the machine"* unprompted** | T | ✅ |
@@ -143,9 +229,37 @@ criterion that names no environment capable of running it is not a criterion.
 
 | ID        | Requirement                                                                                                                       | Cls | Risk | Acceptance criterion — what we run                                                                                                                                                                                                                                                                                                         | M   | Status |
 | --------- | --------------------------------------------------------------------------------------------------------------------------------- | --- | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ------ |
-| **UR-07** | A reader **shall be able to** determine **what** was chosen — the technologies, protocols and structures the system is built from | M   | M    | The DS names the constituent choices at a level a builder would need: *"stdio MCP server, Python, stdlib HTTP, flat-file index"*. **Verified by inspection: a reader can list the technology stack from the DS without opening the source.** Reasoning and rejected alternatives are explicitly **not** required                           | I   | ❌      |
+| **UR-07** | A reader **shall be able to** determine **what** was chosen — the technologies, protocols and structures the system is built from | M   | M    | The DS names the constituent choices at a level a builder would need: *"stdio MCP server, Python, stdlib HTTP, flat-file index"*. **Verified by inspection: a reader can list the technology stack from the DS without opening the source.** Reasoning and rejected alternatives are explicitly **not** required                           | I   | ✅      |
+> #### ✏️ `FS-05` rewritten 2026-08-30 — it specified an engineering decision, not a function
+>
+> **It read:** *"`generate` performs single-prompt completion via `/api/chat`,
+> never `/api/generate`."*
+>
+> **That is an implementation, written where a behaviour belongs.** The endpoint
+> was the mechanism someone chose in order to get the chat template applied; the
+> *requirement* was always that the template gets applied, because skipping it
+> makes template-sensitive families emit reserved vocabulary such as
+> `<unused50>`.
+>
+> **The cost of the confusion was a whole verification cycle.** `VT-010` returned
+> clean prose on four independent paths — the behaviour was correct — and was
+> still graded a failure, because the code called the other endpoint. **A test
+> that passes its own stated criterion cannot be a failure**, and a requirement
+> that turns a passing behaviour into a deviation is over-specified.
+>
+> **The general rule, since this will recur:** an FS says *what must be true*, in
+> terms a test can check. *How* it is achieved is the DS's business, and putting
+> it in the FS converts every future implementation change into a spec deviation
+> for no gain in safety.
+>
+> **Nothing is lost.** The new wording is *more* testable, not less: the
+> `prompt_eval_count` comparison detects a skipped template **whatever endpoint
+> is used and whatever Ollama does next**, which the old wording could not — it
+> only checked that we called a particular URL. The `<unused50>` history is kept
+> in DS §5.2 as the reason, where reasons belong.
+
 | **UR-08** | A developer **shall be able to** add an alternative inference backend without rewriting the tool layer                               | D   | L    | **Verified by inspection 2026-08-28:** exactly one `urlopen` call site per file; `_request()` is defined once and called from 13 tools. A second backend is a single-function change                                                                                                                                                       | I   | ✅      |
-| **UR-10** | A reader **shall be able to** distinguish a deliberate constraint from an incidental implementation detail                        | D   | L    | The non-goals section exists, and each constraint named there cites a decision                                                                                                                                                                                                                                                             | I   | ◐      |
+| **UR-10** | A reader **shall be able to** distinguish a deliberate constraint from an incidental implementation detail                        | D   | L    | The non-goals section exists, and each constraint named there cites a decision                                                                                                                                                                                                                                                             | I   | ✅      |
 
 ### 4.3 PER-3 — the retrieval user
 
@@ -153,21 +267,21 @@ criterion that names no environment capable of running it is not a criterion.
 | --------- | ------------------------------------------------------------------------------------------------------------------- | --- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ------ |
 | **UR-11** | The operator **shall be able to** maintain multiple independent indexes over different corpora                      | M   | M     | Two indexes built over disjoint folders coexist; a search of one returns **no chunk originating in the other**                                                                                         | T   | ❌      |
 | **UR-12** | The operator **shall be able to** identify an index's purpose and provenance without opening it                     | M   | M     | `index_list` reports name, description, source root, build time and model for each. An index lacking a field reports `unknown`, never a value                                                          | T   | ❌      |
-| **UR-13** | A caller **shall be able to** search one index in isolation from the others                                         | M   | M     | Covered by UR-11's criterion                                                                                                                                                                           | T   | ✅      |
+| **UR-13** | A caller **shall be able to** search one index in isolation from the others                                         | M   | M     | Covered by UR-11's criterion                                                                                                                                                                           | T   | ⚠️      |
 | **UR-14** | A caller **shall be able to** judge whether a ranked result discriminates between candidates or merely participates | M   | M     | A query with a genuinely relevant result and a query with none produce **visibly different spread lines**; the latter is flagged. *The system supplies the signal; the judgement remains the caller's* | T   | ✅      |
 | **UR-15** | A caller **shall be able to** distinguish a recall failure from a ranking failure                                   | M   | M     | Seed one string absent from the corpus and one present but poorly ranked. `--explain` distinguishes them                                                                                               | T   | ✅      |
 | **UR-16** | A caller **shall be able to** determine an index's staleness before relying on it                                   | M   | M     | Modify a source file after a build; `status` names that file. `index_search` reports `built_at` and the refresh command                                                                                | T   | ❌      |
-| **UR-17** | An agent **shall be able to** invoke retrieval directly, without a human transcribing terminal output               | M   | **H** | An agent calls `index_search` over MCP and receives citations, with no human in the loop                                                                                                               | D   | ❌      |
+| **UR-17** | An agent **shall be able to** invoke retrieval directly, without a human transcribing terminal output               | M   | **H** | An agent calls `index_search` over MCP and receives citations, with no human in the loop                                                                                                               | D   | ✅      |
 
 ### 4.4 PER-4 — the orchestrating agent
 
 | ID | Requirement | Cls | Risk | Acceptance criterion — what we run | M | Status |
 |---|---|---|---|---|---|---|
 | **UR-18** | A caller **shall be able to** distinguish a successful call from one that succeeded and returned nothing useful | M | **H** | An empty generation, a truncated generation and a mismatched embedding count each return a **distinct verdict**, none of them `ok` | T | ✅ |
-| **UR-19** | A caller **shall be able to** determine where a call executed, on every response, without inferring it from a name | M | **H** | `location` present on every listing and inference response. `cloud?` appears **only** where tag and size disagree | T | ◐ |
-| **UR-20** | A caller **shall be** refused, before execution, on the three actions this system identifies as silently corrupting or irreversible: over-length input, model pull, model delete | M | **H** | Over-length input is refused **before** the call; `pull` and `delete` are refused on default configuration | T | ✅ |
+| **UR-19** | A caller **shall be able to** determine where a call executed, on every response, without inferring it from a name | M | **H** | `location` present on every listing and inference response. `cloud?` appears **only** where tag and size disagree | T | ✅ |
+| **UR-20** | A caller **shall be** refused, before execution, on the three actions this system identifies as silently corrupting or irreversible: over-length input, model pull, model delete | M | **H** | **All three verified.** `VT-030` the guard logic; `VT-031` the refusal reached and seen on `ENV-1`, including `context_exceeded` **before any model call**; `VT-014` the same through a non-Claude client on `ENV-3`. ⚠️ **Scope of the guarantee:** the gate governs *this tool surface*, not the capability — on `ENV-3` the client, having been refused, ran `ollama rm` in a shell and was stopped by the operator, not by us. See Threat 4 | T | ✅ |
 | **UR-21** | A caller **shall be able to** discover installed models and their capabilities rather than guessing identifiers | M | M | Every model name returned by `list_models` is callable without a 404 | T | ✅ |
-| **UR-22** | A caller **shall be able to** obtain retrieval evidence at a context cost proportional to what it requested, not to what was searched | M | M | Search returns citations without chunk text. **Measured return size for a 10-result search is under 1 kB against a 400-chunk corpus** | A | ✅ |
+| **UR-22** | A caller **shall be able to** obtain retrieval evidence at a context cost proportional to what it requested, not to what was searched | M | M | Search returns citations without chunk text. **A 10-result search returns under 5 kB against a 400+ chunk corpus.** Measured `VT-020`: 2,240 chars, ~224 per citation, 443-chunk index, `ENV-1`, 2026-08-30. **Ceiling widened from 1 kB by ruling 2026-08-30 — the original figure was never measured**; citations now carry a heading and a line range, which is the feature | T | ✅ |
 | **UR-23** | A caller **shall be able to** determine when delegation is appropriate, from guidance supplied with the system | M | **H** | A skill eval with a control arm **that is capable of the behaviour being suppressed** shows a difference in delegation rate | T | ◐ |
 
 | **UR-33** | The caller **shall be able to** determine what a completed call cost, in generated tokens, throughput and model load time | D | L | Every inference response carries `eval_count` and `tokens_per_second` when Ollama reports them, and reports model load time **separately** from generation rate so a cold load does not read as a slow model | I | ✅ |
@@ -176,12 +290,12 @@ criterion that names no environment capable of running it is not a criterion.
 
 | ID        | Requirement                                                                                            | Cls | Risk  | Acceptance criterion — what we run                                                        | M   | Status |
 | --------- | ------------------------------------------------------------------------------------------------------ | --- | ----- | ----------------------------------------------------------------------------------------- | --- | ------ |
-| **UR-24** | A reader **shall be able to** determine the system's purpose within minutes, led by capability rather than cost   | M   | M     | The README's first screen states what it is for, and **cost is not the leading argument** | I   | ◐      |
-| **UR-25** | A reader **shall be able to** determine the system's non-goals, and what it does not unlock                       | M   | M     | Named *Assumptions and non-goals* section present, including the accountability statement | I   | ❌      |
-| **UR-26** | A reader **shall be able to** determine how this differs from redirecting **Claude Code** at Ollama via `ANTHROPIC_BASE_URL`             | M   | M     | The README answers the question explicitly, by name, and **distinguishes Claude Code from Cowork** rather than treating them as one client                                       | I   | ❌      |
+| **UR-24** | A reader **shall be able to** determine the system's purpose within minutes, led by capability rather than cost   | M   | M     | The README's first screen states what it is for, and **cost is not the leading argument** | I   | ✅      |
+| **UR-25** | A reader **shall be able to** determine the system's non-goals, and what it does not unlock                       | M   | M     | Named *Assumptions and non-goals* section present, including the accountability statement | I   | ✅      |
+| **UR-26** | A reader **shall be able to** determine how this differs from redirecting **Claude Code** at Ollama via `ANTHROPIC_BASE_URL`             | M   | M     | The README answers the question explicitly, by name, and **distinguishes Claude Code from Cowork** rather than treating them as one client                                       | I   | ✅      |
 | **UR-27** | A reader **shall be able to** determine what has been verified, with what limits, and what defects ship knowingly | M   | M     | VR published, carrying the defect triage register with a release decision per entry       | I   | ❌      |
 | **UR-28** | A reader **shall be able to** determine the licence terms                                                         | M   | **H** | `LICENSE` present at repository root and named in the README. **MIT, © 2026 Tim Wortley, written 2026-08-28.** README states the licence covers the specification and verification documents, not only source | I   | ✅ |
-| **UR-32** | A reader **shall be able to** determine what the system was *required* to do, and follow any requirement through to its design and its verification | M | M | **Every `FS`/`UR` identifier cited in a published document resolves within the published set.** Run as a link check, not a judgement: extract every identifier from `docs/*.md`, and fail on any that no published document defines | T | ❌ |
+| **UR-32** | A reader **shall be able to** determine what the system was *required* to do, and follow any requirement through to its design and its verification | M | M | **Every `FS`/`UR` identifier cited in a published document resolves within the published set.** Run as a link check, not a judgement: extract every identifier from `docs/*.md`, and fail on any that no published document defines | T | ✅ |
 
 > #### ⚠️ `UR-32` is PROPOSED, not agreed — added 2026-08-30
 >
@@ -231,7 +345,7 @@ Each function names the `UR` it exists to satisfy.
 
 | ID | Function | Satisfies |
 |---|---|---|
-| **FS-05** | `generate` performs single-prompt completion via `/api/chat`, never `/api/generate` | UR-18 |
+| **FS-05** | `generate` submits single-prompt completions **such that the model's chat template is applied**, so a template-sensitive family returns text rather than reserved vocabulary. Verified by comparing `prompt_eval_count` against an equivalent `chat` call: equal counts mean equal tokenisation, so no template was skipped | UR-18 |
 | **FS-06** | `chat` performs multi-turn completion, budgeting the entire message history | UR-18, UR-20 |
 | **FS-07** | `embed` returns vectors, asserting output count equals input count | UR-05, UR-20 |
 
