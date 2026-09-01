@@ -79,8 +79,11 @@ RESPONSE_BYTE_CAP = 60_000
 # and names the wider pool. index_explain then reports whether the passage you
 # expected fell outside the boundary.
 #
-# **The CLI has no such limit.** `vault_index.py search --rerank-pool 40` is the
-# supported way to run the measured-correct width, and the README says so.
+# **The CLI is not bound by the CLIENT's timeout**, which is what matters here:
+# `vault_index.py search --rerank-pool 40` is the supported way to run the
+# measured-correct width. It is NOT unbounded -- each scoring batch has its own
+# 120s limit, and saying otherwise sent an operator to a path that then crashed
+# (2026-08-31, ENV-2). Exceeding it now returns a stated cause and a remedy.
 RERANK_POOL = 20
 
 # The top of the 0/1/2 rubric. A rerank whose best score is below this judged
@@ -193,39 +196,53 @@ def register(mcp: Any, config: Any) -> None:
         Every field comes from the index header. A field the index does not
         carry is reported as "unknown" rather than guessed.
         """
-        if not index_dir.is_dir():
+        try:
+            if not index_dir.is_dir():
+                return _refusal(Refused(
+                    "not_configured",
+                    f"OLLAMA_MCP_INDEX_DIR points at {index_dir}, which is not a "
+                    "directory on this host.",
+                    "Create it, or point the variable at the directory holding "
+                    "your <name>.index.json files, and restart the MCP client."))
+
+            indexes, unreadable = [], []
+            for path in sorted(index_dir.glob(f"*{vi.INDEX_SUFFIX}")):
+                name = path.name[: -len(vi.INDEX_SUFFIX)]
+                try:
+                    index = _load(index_dir, name)
+                except vi.IndexerError as exc:
+                    # Named, not skipped. A caller told an index does not exist
+                    # will rebuild the wrong thing; one told it exists and cannot
+                    # be read has the actual problem in front of it.
+                    unreadable.append({"name": name, "verdict": exc.verdict,
+                                       "error": str(exc), "remedy": exc.remedy})
+                    continue
+                entry = _header(index)
+                entry["location"] = _location(index.get("model", ""))
+                indexes.append(entry)
+
+            return _ok(
+                index_dir=str(index_dir),
+                indexes=indexes,
+                unreadable=unreadable,
+                note=("`location` is where the EMBEDDING model ran. An index built "
+                      "through a cloud model means the corpus already left this "
+                      "host. Staleness: each entry carries `built_at`; "
+                      "`vault_index.py status <name>` is the check."),
+            )
+        except vi.IndexerError as exc:
+            return _refusal(Refused(exc.verdict, str(exc), exc.remedy))
+        except Exception as exc:                      # noqa: BLE001
+            # index_list had NO handler at all until 2026-08-31 -- the fourth
+            # instance of the same class found that day. Globbing a directory
+            # can raise PermissionError or OSError, and an index_list that
+            # crashes is worse than the others: it is the tool a caller uses to
+            # find out what went wrong.
             return _refusal(Refused(
-                "not_configured",
-                f"OLLAMA_MCP_INDEX_DIR points at {index_dir}, which is not a "
-                "directory on this host.",
-                "Create it, or point the variable at the directory holding "
-                "your <name>.index.json files, and restart the MCP client."))
-
-        indexes, unreadable = [], []
-        for path in sorted(index_dir.glob(f"*{vi.INDEX_SUFFIX}")):
-            name = path.name[: -len(vi.INDEX_SUFFIX)]
-            try:
-                index = _load(index_dir, name)
-            except vi.IndexerError as exc:
-                # Named, not skipped. A caller told an index does not exist
-                # will rebuild the wrong thing; one told it exists and cannot
-                # be read has the actual problem in front of it.
-                unreadable.append({"name": name, "verdict": exc.verdict,
-                                   "error": str(exc), "remedy": exc.remedy})
-                continue
-            entry = _header(index)
-            entry["location"] = _location(index.get("model", ""))
-            indexes.append(entry)
-
-        return _ok(
-            index_dir=str(index_dir),
-            indexes=indexes,
-            unreadable=unreadable,
-            note=("`location` is where the EMBEDDING model ran. An index built "
-                  "through a cloud model means the corpus already left this "
-                  "host. Staleness: each entry carries `built_at`; "
-                  "`vault_index.py status <name>` is the check."),
-        )
+                "internal_error",
+                f"{type(exc).__name__}: {exc}",
+                "This is a defect in ollama-delegate, not a configuration "
+                "problem. The verdict and message above are what a report needs."))
 
     # ---------------------------------------------------------------- search
 
@@ -344,7 +361,8 @@ def register(mcp: Any, config: Any) -> None:
                         "index_explain with a phrase you expect to find, or run "
                         f"`vault_index.py search <index> \"{query}\" --rerank "
                         f"--rerank-pool {min(len(candidates) * 2, POOL_MAX)}` on "
-                        "the CLI, which has no timeout.")
+                        "the CLI, which is not bounded by the client's timeout "
+                        "but does apply its own 120s per scoring batch.")
                 if judgements and max(judgements) == 0:
                     # "Nothing here answers the question" is a real answer and
                     # has to be said. Rows of zeros without a word implies a
@@ -393,6 +411,26 @@ def register(mcp: Any, config: Any) -> None:
             return _refusal(exc)
         except vi.IndexerError as exc:
             return _refusal(Refused(exc.verdict, str(exc), exc.remedy))
+        except Exception as exc:                      # noqa: BLE001
+            # UR-06 BY CONSTRUCTION, NOT BY ENUMERATION.
+            #
+            # The two clauses above are the enumeration, and on 2026-08-31 a
+            # TimeoutError -- a sibling of URLError, not a subclass -- walked
+            # past both and reached an operator as a bare tool error. The
+            # specific hole is fixed in vault_index._post. This clause exists
+            # because the NEXT unenumerated type is not knowable, and the
+            # requirement is that a failure states a cause and a remedy.
+            #
+            # It names the exception class rather than swallowing it: a bug
+            # reported as `internal_error: KeyError: 'model'` is diagnosable,
+            # and one reported as "something went wrong" is not.
+            return _refusal(Refused(
+                "internal_error",
+                f"{type(exc).__name__}: {exc}",
+                "This is a defect in ollama-delegate, not a configuration "
+                "problem. The verdict and message above are what a report "
+                "needs. Retrieval itself is unaffected: re-run without "
+                "--rerank, or use index_explain, to keep working."))
 
     # ------------------------------------------------------------------- get
 
@@ -486,6 +524,26 @@ def register(mcp: Any, config: Any) -> None:
             return _refusal(exc)
         except vi.IndexerError as exc:
             return _refusal(Refused(exc.verdict, str(exc), exc.remedy))
+        except Exception as exc:                      # noqa: BLE001
+            # UR-06 BY CONSTRUCTION, NOT BY ENUMERATION.
+            #
+            # The two clauses above are the enumeration, and on 2026-08-31 a
+            # TimeoutError -- a sibling of URLError, not a subclass -- walked
+            # past both and reached an operator as a bare tool error. The
+            # specific hole is fixed in vault_index._post. This clause exists
+            # because the NEXT unenumerated type is not knowable, and the
+            # requirement is that a failure states a cause and a remedy.
+            #
+            # It names the exception class rather than swallowing it: a bug
+            # reported as `internal_error: KeyError: 'model'` is diagnosable,
+            # and one reported as "something went wrong" is not.
+            return _refusal(Refused(
+                "internal_error",
+                f"{type(exc).__name__}: {exc}",
+                "This is a defect in ollama-delegate, not a configuration "
+                "problem. The verdict and message above are what a report "
+                "needs. Retrieval itself is unaffected: re-run without "
+                "--rerank, or use index_explain, to keep working."))
 
     # --------------------------------------------------------------- explain
 
@@ -575,3 +633,23 @@ def register(mcp: Any, config: Any) -> None:
             return _refusal(exc)
         except vi.IndexerError as exc:
             return _refusal(Refused(exc.verdict, str(exc), exc.remedy))
+        except Exception as exc:                      # noqa: BLE001
+            # UR-06 BY CONSTRUCTION, NOT BY ENUMERATION.
+            #
+            # The two clauses above are the enumeration, and on 2026-08-31 a
+            # TimeoutError -- a sibling of URLError, not a subclass -- walked
+            # past both and reached an operator as a bare tool error. The
+            # specific hole is fixed in vault_index._post. This clause exists
+            # because the NEXT unenumerated type is not knowable, and the
+            # requirement is that a failure states a cause and a remedy.
+            #
+            # It names the exception class rather than swallowing it: a bug
+            # reported as `internal_error: KeyError: 'model'` is diagnosable,
+            # and one reported as "something went wrong" is not.
+            return _refusal(Refused(
+                "internal_error",
+                f"{type(exc).__name__}: {exc}",
+                "This is a defect in ollama-delegate, not a configuration "
+                "problem. The verdict and message above are what a report "
+                "needs. Retrieval itself is unaffected: re-run without "
+                "--rerank, or use index_explain, to keep working."))

@@ -2235,6 +2235,69 @@ def selftest() -> int:
             exc.verdict == "ollama_unreachable",
         )
 
+    print("A timeout is a stated cause, not a traceback")
+    # THE 2026-08-31 DEFECT, PINNED.
+    #
+    # urllib.error.URLError and TimeoutError are SIBLINGS under OSError. A read
+    # timeout therefore walked past `except URLError`, past _score_batch's
+    # `except IndexerError`, past rerank()'s `failures` collector -- whose only
+    # purpose is to absorb exactly this -- and reached an operator as a stack
+    # trace on ENV-2, and as a bare tool error through a client on ENV-5.
+    #
+    # These assertions raise the real exception rather than a stand-in, because
+    # the defect was ENTIRELY about which exception type arrives.
+    import vault_index as _vi
+
+    class _TimingOutOpener:
+        def __enter__(self): raise TimeoutError("timed out")
+        def __exit__(self, *a): return False
+
+    _real_urlopen = _vi.urllib.request.urlopen
+    _vi.urllib.request.urlopen = lambda *a, **k: _TimingOutOpener().__enter__()
+    try:
+        _vi._post("http://127.0.0.1:1", "/api/chat", {}, timeout=1)
+        check("a read timeout is converted, not propagated", False)
+    except _vi.IndexerError as exc:
+        check("a read timeout is converted, not propagated", True)
+        check("the timeout verdict is ollama_timeout",
+              exc.verdict == "ollama_timeout")
+        check("the timeout remedy names a lever the operator can pull",
+              any(w in (exc.remedy or "") for w in ("--rerank", "smaller")))
+        check("the timeout message says the host ANSWERED too slowly, "
+              "not that it was unreachable",
+              "unreachable" not in str(exc).lower())
+    except TimeoutError:
+        check("a read timeout is converted, not propagated", False)
+    finally:
+        _vi.urllib.request.urlopen = _real_urlopen
+
+    # A batch that times out must be COLLECTED, not fatal: the other batches
+    # still score and the caller is told which did not.
+    # Drive the REAL chain -- _post converts, _score_batch collects, rerank
+    # absorbs -- by failing at the socket, the only place the defect lived.
+    # Stubbing _score_batch instead would have tested the stub: the first
+    # version of this assertion made it raise, which _score_batch never does,
+    # and the failure was in the test rather than the code.
+    _vi.urllib.request.urlopen = lambda *a, **k: _TimingOutOpener().__enter__()
+    try:
+        stats: dict = {}
+        out = _vi.rerank("http://127.0.0.1:1", "m", "q",
+                         [(0.5, "f.md", "text")], 1, stats=stats)
+        check("a timing-out rerank returns rather than raising", True)
+        check("the caller is told which batch failed",
+              bool(stats.get("failures")))
+        check("the failure text names the timeout, not a generic error",
+              any("did not answer" in f for f in stats.get("failures", [])))
+        check("embedding order survives a failed rerank", len(out) == 1)
+    except Exception:
+        for label in ("a timing-out rerank returns rather than raising",
+                      "the caller is told which batch failed",
+                      "the failure text names the timeout, not a generic error",
+                      "embedding order survives a failed rerank"):
+            check(label, False)
+    finally:
+        _vi.urllib.request.urlopen = _real_urlopen
+
     print()
     if failures:
         print(f"SELFTEST FAILED: {len(failures)} assertion(s)")

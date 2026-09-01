@@ -66,6 +66,17 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     ("vault_index.py", "return path.relative_to(root).as_posix()",
      "return str(path.relative_to(root))",
      "store the platform's path separators in the index"),
+    # --- the timeout escape, found on a live host 2026-08-31 --------------
+    ("vault_index.py", "    except TimeoutError as e:",
+     "    except ZeroDivisionError as e:",
+     "let a read timeout fall through to the generic OSError handler"),
+    ("vault_index.py", 'remedy="A model too large for this machine is the usual cause, and a "',
+     'remedy="" or (', "strip the remedy from the timeout refusal"),
+    ("vault_index.py", "    except IndexerError as e:\n"
+                       "        # One unreachable batch is not a failed rerank",
+     "    except ZeroDivisionError as e:\n"
+     "        # One unreachable batch is not a failed rerank",
+     "stop rerank collecting a failed batch, so one timeout is fatal"),
     # --- citations --------------------------------------------------------
     ("vault_index.py", 'block["start"] + para.count("\\n", 0, offset)',
      'block["start"]', "cite the block start for every slice of it"),

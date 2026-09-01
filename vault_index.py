@@ -189,6 +189,25 @@ def _note(message: str) -> None:
 # ---------------------------------------------------------------- transport
 
 
+def _timed_out(host: str, timeout: float) -> "IndexerError":
+    """
+    One timeout message, so the remedy cannot drift between call sites.
+
+    The remedy names the three levers in the order they cost: stop reranking,
+    narrow the pool, use a smaller model. It does NOT send the operator to the
+    CLI as an escape -- the CLI has the same timeout, and a remedy that moves
+    the failure somewhere else is worse than none.
+    """
+    return IndexerError(
+        f"Ollama at {host} accepted the connection but did not answer within "
+        f"{timeout:.0f}s.",
+        verdict="ollama_timeout",
+        remedy="A model too large for this machine is the usual cause, and a "
+               "cold load is slower than a warm one -- try the same call again "
+               "first. Otherwise: drop --rerank, narrow --rerank-pool, or "
+               "choose a smaller reranking model.")
+
+
 def _post(host: str, path: str, payload: dict, timeout: float = 300) -> dict:
     req = urllib.request.Request(
         host.rstrip("/") + path,
@@ -200,9 +219,37 @@ def _post(host: str, path: str, payload: dict, timeout: float = 300) -> dict:
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode())
     except urllib.error.URLError as e:
+        # A connect-time failure. `e.reason` is frequently itself an OSError,
+        # and a connect timeout arrives wrapped this way rather than raw.
+        if isinstance(e.reason, TimeoutError):
+            raise _timed_out(host, timeout) from e
         raise IndexerError(f"Cannot reach Ollama at {host}: {e.reason}",
                            verdict="ollama_unreachable",
                            remedy="Is it running? Try: ollama serve") from e
+    except TimeoutError as e:
+        # THE READ TIMEOUT, and the reason this clause exists.
+        #
+        # `urllib.error.URLError` and `TimeoutError` are SIBLINGS under
+        # OSError, not parent and child. A read timeout -- the connection was
+        # accepted, the model then took longer than `timeout` to answer --
+        # therefore walked straight past the URLError handler above, past
+        # `_score_batch`'s `except IndexerError`, past rerank()'s per-batch
+        # `failures` collector whose entire purpose is to absorb exactly this,
+        # and reached the operator as a traceback. Found on ENV-2 2026-08-31,
+        # having already been seen on ENV-5 the same day wearing a different
+        # mask: through an MCP client the same escape surfaces as a bare tool
+        # error with no verdict, reason or remedy.
+        #
+        # Two models failed identically before this was understood, which sent
+        # the diagnosis after the models. The model was never the variable.
+        raise _timed_out(host, timeout) from e
+    except OSError as e:
+        # Enumerating exception types is what failed above. Anything else the
+        # socket layer raises becomes a stated cause rather than a trace.
+        raise IndexerError(f"Network error talking to Ollama at {host}: {e}",
+                           verdict="ollama_unreachable",
+                           remedy="Check that Ollama is running and reachable: "
+                                  "ollama serve") from e
 
 
 def context_limit(host: str, model: str) -> int:
