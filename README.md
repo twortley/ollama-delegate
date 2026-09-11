@@ -42,9 +42,9 @@ It does **not** replace your client's model. This is a delegation bridge: the
 orchestrating model stays in charge and calls the local model as a tool.
 
 **The server is client-agnostic** — it is a standard stdio MCP server and does
-not care what is on the other end. The companion skill is not: it is written for
-Anthropic's clients. **Use the server with any MCP client; the skill needs one
-that supports skills.**
+not care what is on the other end. **The skill needs a client that loads
+`SKILL.md` skills**, which is a narrower set than "any MCP client" but not one
+vendor's. Nothing in the skill names a vendor or a product: it names the tools.
 
 ## Prerequisites
 
@@ -222,6 +222,49 @@ its own configuration.
 `--selftest` and `--probe` need nothing but Python and a reachable Ollama, on any
 platform. **Only the client wiring differs.**
 
+### Add the companion skill
+
+The server gives an agent the tools. The `local-inference-delegation` skill in
+`skills/` tells it **when** to use them, which is the part that fails without it:
+an agent with nine tools and no judgement about delegating mostly never calls
+them. It needs a client that supports skills.
+
+**Claude Code** reads skills from `~/.claude/skills/` for every project, or from
+`.claude/skills/` inside a project. Copy the whole folder:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.claude\skills" | Out-Null
+Copy-Item -Recurse -Force skills\local-inference-delegation "$HOME\.claude\skills\"
+```
+
+```bash
+mkdir -p ~/.claude/skills && cp -r skills/local-inference-delegation ~/.claude/skills/
+```
+
+**Claude apps, including Cowork**, take a skill as a ZIP of its folder: open
+**Customize → Skills**, then **+ → Create skill → Upload a skill**. Code execution
+must be enabled.
+
+```powershell
+Compress-Archive -Force -Path skills\local-inference-delegation -DestinationPath local-inference-delegation.zip
+```
+
+```bash
+(cd skills && zip -r ../local-inference-delegation.zip local-inference-delegation)
+```
+
+**Google Antigravity** reads the same format, from `.agents/skills/` in a workspace
+or `~/.gemini/config/skills/` for every workspace. Copy the folder into either.
+**Expect to adjust the tool-call examples**: if your client dispatches MCP tools
+through a wrapper rather than calling them by name, the examples in the skill
+need that form. Nothing else changes — and the skill already tells an agent to go
+by the tools rather than by the server's registered name.
+
+**Changing the skill: edit it here, not where it is installed.** The copy in
+`skills/` is the source, and an installed copy is a deployment of it. Edit and
+commit in the repository, then install again over the old copy. An edit made to
+the installed copy has no history, and the next install silently overwrites it.
+
 ## Local and cloud models both work — and you can tell them apart
 
 Ollama can serve **hosted** models alongside local ones. They look identical in a
@@ -253,6 +296,10 @@ ANTHROPIC_AUTH_TOKEN=ollama
 ANTHROPIC_BASE_URL=http://localhost:11434
 claude --model gpt-oss:20b
 ```
+
+This route redirects **Claude Code**, which reads the variable from its
+environment. It does not redirect **Claude Desktop or Cowork**: their endpoint
+comes from the app's own configuration, not your shell.
 
 **That route replaces the agent. This one delegates from inside it.** They solve
 different problems, and the clearest evidence is that the base-URL route has

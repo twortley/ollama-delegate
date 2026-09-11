@@ -36,3 +36,5 @@ desktop.ini
 # only covers the repository root; an index directory pointed anywhere inside
 # the tree by OLLAMA_MCP_INDEX_DIR would slip past it.
 *.index.json
+# The skill ZIP the README builds for upload -- a build product, not source
+/*.zip
