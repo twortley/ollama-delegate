@@ -2066,6 +2066,8 @@ def selftest() -> int:
             check("index_list reports the readable index", names == ["fixture"])
             check("index_list reads the description from the header",
                   listed["indexes"][0]["description"] == "a fixture corpus")
+            check("index_list reports source_root from the header",
+                  listed["indexes"][0].get("source_root") == tmp)
             check("a v1 index is named as unreadable, not silently skipped",
                   [u["name"] for u in listed["unreadable"]] == ["legacy"])
             check("the v1 refusal verdict is unsupported_index",

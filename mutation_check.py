@@ -83,6 +83,8 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     ("vault_index.py", 'block["start"] + para.count("\\n", 0, stop)',
      'block["end"]', "cite the block end for every slice of it"),
     # --- the tool surface -------------------------------------------------
+    ("index_tools.py", '"source_root": got("source_root"),', "",
+     "drop source_root from index_list, which UR-12 requires"),
     ("index_tools.py", "elif gen != generation:", "elif False:",
      "hydrate an id from a different generation"),
     ("index_tools.py", '"rerank": r.get("rerank"),',

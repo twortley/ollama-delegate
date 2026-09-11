@@ -145,6 +145,9 @@ def _header(index: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": got("name"),
         "description": got("description"),
+        # What was indexed. UR-12 names it: an index built without a
+        # description is otherwise identifiable only by name, model and date.
+        "source_root": got("source_root"),
         "built_at": got("built_at"),
         "generation": got("generation"),
         "files": got("file_count"),

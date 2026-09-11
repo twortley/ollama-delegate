@@ -552,7 +552,7 @@ index_explain(index: str, query: str, text: str) -> dict[str, Any]
 
 **Returns on success:** `index`, `query`, `hits`, `diagnosis`, `explanation`
 
-**Verdicts reachable:** `invalid_request`, `ok`
+**Verdicts reachable:** `internal_error`, `invalid_request`, `ok`
 
 #### `index_get`
 
@@ -564,7 +564,7 @@ index_get(index: str, ids: list[str]) -> dict[str, Any]
 
 **Returns on success:** `index`, `generation`, `chunks`
 
-**Verdicts reachable:** `invalid_request`, `ok`, `stale_id`
+**Verdicts reachable:** `internal_error`, `invalid_request`, `ok`, `stale_id`
 
 #### `index_list`
 
@@ -576,7 +576,7 @@ index_list() -> dict[str, Any]
 
 **Returns on success:** `index_dir`, `indexes`, `unreadable`, `note`
 
-**Verdicts reachable:** `not_configured`, `ok`
+**Verdicts reachable:** `internal_error`, `not_configured`, `ok`
 
 #### `index_search`
 
@@ -588,7 +588,7 @@ index_search(index: str, query: str, k: int = 10, rerank: bool = True, rerank_mo
 
 **Returns on success:** `index`, `generation`, `built_at`, `model`, `location`, `chunks_searched`, `spread`, `reranked_by`, `results`, `note`
 
-**Verdicts reachable:** `invalid_request`, `ok`
+**Verdicts reachable:** `internal_error`, `invalid_request`, `ok`
 
 <!-- END GENERATED: tools -->
 
@@ -956,7 +956,7 @@ file reading as removed-and-added when checked from another.
 | `format` | Index format version. **A reader that does not recognise it refuses the file** rather than interpreting the fields it happens to know |
 | `name` | The index's own name, matching its filename. `[a-z0-9_-]+` |
 | `description` | What the corpus is for. **With several indexes this is the field a caller chooses between them on**; an index without one is a filename |
-| `source_root` | Absolute path the corpus was built from, on the machine that built it. Used only by `status`, which reports `2` when it is not reachable here |
+| `source_root` | Absolute path the corpus was built from, on the machine that built it. Reported by `index_list`, so an index is identifiable by what it indexed (`UR-12`), and used by `status`, which reports `2` when it is not reachable here |
 | `built_at` | ISO 8601 with offset. **Reported, never used to estimate staleness** |
 | `builder_version` | Which builder wrote the file, so a reader need not infer it from which fields are present |
 | `generation` | Short hash scoping every chunk id. See below |
