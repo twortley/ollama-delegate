@@ -7,7 +7,7 @@ doc_type: specification
 status: wip
 doc_revision: "1"
 created: 2026-08-28
-last_updated: 2026-08-29T00:00:00-04:00
+last_updated: 2026-09-11T00:00:00-04:00
 source_author: Tim Wortley + Claude
 tags:
   - specification
@@ -222,7 +222,7 @@ criterion that names no environment capable of running it is not a criterion.
 | **UR-03** | The operator **shall be able to** configure model access, write permissions and index location without editing code | M | M | Each `OLLAMA_MCP_*` variable changes the permitted operation set, and `server_info` reports the change. No source file is touched. **The documented config example names every variable at its default**, so their existence is discoverable without reading source | T | ◐ |
 | **UR-04** | The operator **shall be able to** determine, for any call, whether content left their machine | M | **H** | Every inference response carries `location`. A `:cloud`-tagged model returns `cloud`; a local model returns `local`. **Exercised on `ENV-2` through a live client: 4 local / 2 cloud split correctly, and the agent volunteered *"the text never left the machine"* unprompted** | T | ✅ |
 | **UR-05** | The operator **shall be able to** index a corpus of their own choosing | M | M | `build` against an arbitrary operator-supplied folder produces an index whose file count equals the folder's `.md` count | D | ✅ |
-| **UR-06** | On failure the operator **shall be able to** obtain a stated cause and a remedy, not a stack trace | M | **H** | Every refusal path returns `verdict`, `reason` and `remedy`. **Each remedy is executed and produces the promised effect** | T | ◐ |
+| **UR-06** | On failure the operator **shall be able to** obtain a stated cause and a remedy, not a stack trace | M | **H** | Every refusal path returns `verdict`, `reason` and `remedy`. **Each remedy is executed and produces the promised effect** | T | ⚠️ |
 | **UR-31** | The system **shall** run on the Python version stated in its own documentation | M | M | **Floor declared 3.10 and enforced at runtime** by both entry points (2026-08-30); stated in `requirements.txt`, the README and DS §14.4. Exercised on **3.10.12** (`ENV-4`, selftest and mutation check, current code), **3.12.3** (`ENV-2`, end to end, but on code predating the retrieval tools) and **3.14.4** (`ENV-1`, selftest, current code). **3.11 is untested and will stay so — owner decision, no CI matrix.** Met with a stated and accepted gap, not by measurement across the range | T | ⚠️ |
 
 ### 4.2 PER-2 — the developer
@@ -265,12 +265,12 @@ criterion that names no environment capable of running it is not a criterion.
 
 | ID        | Requirement                                                                                                         | Cls | Risk  | Acceptance criterion — what we run                                                                                                                                                                     | M   | Status |
 | --------- | ------------------------------------------------------------------------------------------------------------------- | --- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- | ------ |
-| **UR-11** | The operator **shall be able to** maintain multiple independent indexes over different corpora                      | M   | M     | Two indexes built over disjoint folders coexist; a search of one returns **no chunk originating in the other**                                                                                         | T   | ❌      |
-| **UR-12** | The operator **shall be able to** identify an index's purpose and provenance without opening it                     | M   | M     | `index_list` reports name, description, source root, build time and model for each. An index lacking a field reports `unknown`, never a value                                                          | T   | ❌      |
-| **UR-13** | A caller **shall be able to** search one index in isolation from the others                                         | M   | M     | Covered by UR-11's criterion                                                                                                                                                                           | T   | ⚠️      |
+| **UR-11** | The operator **shall be able to** maintain multiple independent indexes over different corpora                      | M   | M     | Two indexes built over disjoint folders coexist; a search of one returns **no chunk originating in the other**                                                                                         | T   | ✅      |
+| **UR-12** | The operator **shall be able to** identify an index's purpose and provenance without opening it                     | M   | M     | `index_list` reports name, description, source root, build time and model for each. An index lacking a field reports `unknown`, never a value                                                          | T   | ✅      |
+| **UR-13** | A caller **shall be able to** search one index in isolation from the others                                         | M   | M     | Covered by UR-11's criterion                                                                                                                                                                           | T   | ✅      |
 | **UR-14** | A caller **shall be able to** judge whether a ranked result discriminates between candidates or merely participates | M   | M     | A query with a genuinely relevant result and a query with none produce **visibly different spread lines**; the latter is flagged. *The system supplies the signal; the judgement remains the caller's* | T   | ✅      |
 | **UR-15** | A caller **shall be able to** distinguish a recall failure from a ranking failure                                   | M   | M     | Seed one string absent from the corpus and one present but poorly ranked. `--explain` distinguishes them                                                                                               | T   | ✅      |
-| **UR-16** | A caller **shall be able to** determine an index's staleness before relying on it                                   | M   | M     | Modify a source file after a build; `status` names that file. `index_search` reports `built_at` and the refresh command                                                                                | T   | ❌      |
+| **UR-16** | A caller **shall be able to** determine an index's staleness before relying on it                                   | M   | M     | Modify a source file after a build; `status` names that file. `index_search` reports `built_at` and the refresh command                                                                                | T   | ✅      |
 | **UR-17** | An agent **shall be able to** invoke retrieval directly, without a human transcribing terminal output               | M   | **H** | An agent calls `index_search` over MCP and receives citations, with no human in the loop                                                                                                               | D   | ✅      |
 
 ### 4.4 PER-4 — the orchestrating agent
@@ -382,7 +382,7 @@ Each function names the `UR` it exists to satisfy.
 | ID | Function | Satisfies |
 |---|---|---|
 | **FS-21** | `index_*` tools register only when an index directory is configured | UR-03, UR-17 |
-| **FS-22** | `index_list` returns each index's name, description, build time, size and model | UR-12, UR-16 |
+| **FS-22** | `index_list` returns each index's name, description, source root, build time, size and model | UR-12, UR-16 |
 | **FS-23** | `index_search` returns citations, embedding the query with the index's own recorded model | UR-13, UR-22 |
 | **FS-24** | `index_get` hydrates named chunks from the index, refusing generation-mismatched ids | UR-22, UR-16 |
 | **FS-25** | `index_explain` reports where known text ranks for a query | UR-15 |
