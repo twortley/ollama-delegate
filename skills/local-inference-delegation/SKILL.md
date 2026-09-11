@@ -109,7 +109,9 @@ If you need clean structured output:
 Do not fight it with increasingly emphatic prompts. It is a property of the
 model, not of your wording.
 
-> [!warning] Budget starvation looks exactly like a broken model
+> [!WARNING]
+> **Budget starvation looks exactly like a broken model**
+>
 > Reasoning is emitted **before** any visible output. Measured 2026-08-26:
 > `gemma4:12b` spent ~60 tokens thinking to answer *"reply with only the number
 > 7"*. At `max_tokens` of 50, 200 and 600 it returned **empty content with
@@ -155,13 +157,50 @@ will get a `context_exceeded` verdict with the numbers rather than a quietly wro
 **Treat that refusal as the system working**, not as an obstacle to route around
 with `allow_truncation`.
 
-### Building a search index — use `vault_index.py`
+### Searching an index — use the `index_*` tools
 
-For semantic search over a folder of markdown, run `vault_index.py` rather than
-orchestrating embeddings through tool calls. It ships alongside the server, in
-the same directory. **Run the installed copy in place** — never copy it
-somewhere convenient first, because a duplicate goes stale silently and the copy
-is what you will end up debugging against.
+**A question about a corpus starts with a search, not with reading files.** If an
+index covers the material, `index_search` answers it in a few hundred tokens;
+reading the notes one at a time to find out costs tens of thousands and arrives
+at the same place. **Reaching for a file reader first is the most common way this
+goes wrong.**
+
+**One rule splits the two surfaces: anything that touches the corpus is a CLI
+operation, and the tools read the index.**
+
+| Want | Call |
+|---|---|
+| Which indexes exist, and what each covers | `index_list` |
+| The relevant passages | `index_search` — returns **citations**: path, heading, line range, score |
+| The text of a passage you chose | `index_get`, on those ids |
+| Why a search missed | `index_explain`, with an exact phrase |
+| Build or refresh an index | the CLI below. **No tool does this, by design** |
+
+**`index_search` returns citations, never chunk text.** Hydrate afterwards, once
+relevance is known — two `index_get` calls on the results that scored is the
+normal shape, and it is the difference between a few hundred tokens and the whole
+corpus.
+
+**Read two things before trusting a result.** The spread line, because
+participation is not discrimination: a narrow spread means the ranking is barely
+ranking. And `index_explain` when a search misses, because it separates a
+**recall** failure from a **ranking** failure, which need opposite fixes.
+`index_search` takes `rerank`, `rerank_model` and `pool` for the same reasons as
+the CLI flags below.
+
+**If the `index_*` tools are not registered**, this server has no index directory
+configured, and the CLI below is the only route.
+
+### Building an index — use `vault_index.py`
+
+**Building is a CLI operation**, because it opens every source file. Searching
+from the CLI is the operator's path; an agent with the tools above should use
+them.
+
+`vault_index.py` ships alongside the server, in the same directory. **Run the
+installed copy in place** — never copy it somewhere convenient first, because a
+duplicate goes stale silently and the copy is what you will end up debugging
+against.
 
 ```
 python vault_index.py build <folder> --out index.json --rebuild
@@ -300,7 +339,9 @@ drift into a plausible but wrong pattern partway through rather than producing
 obvious nonsense, so an eyeball on items 1, 50 and 200 catches more than
 inspecting the first few.
 
-> [!warning] Format compliance is not a quality signal
+> [!WARNING]
+> **Format compliance is not a quality signal**
+>
 > **A small model will comply with your output format long after it has stopped
 > understanding the task.** Measured 2026-08-26: `gemma3:4b` returned twenty
 > perfectly formatted scores in 1.5s that rated a NAS reset-button note a direct
