@@ -447,16 +447,16 @@ Reproducible by anyone with the repository and, where noted, a host.
 
 ### VT-051 — A caller determines when delegation is appropriate, in both directions
 
-**Result: PASS** · ENV-1, 2026-09-12, build `34ff28a`
+**Result: PASS** · ENV-6, 2026-09-12, build `34ff28a`
 
 | | |
 |---|---|
 | Discharges | `UR-23` |
-| Environment | ENV-1 · **needs a live host** |
+| Environment | ENV-6 · **needs a live host** |
 | Procedure | A four-case plan against the published skill. Four tasks: two where delegating is correct (80-title closed-vocabulary classification; 24 long incident reports) and two where the correct action is something else (a six-item judgement prioritisation; a reasoning model needing a budget that fits its thinking). Stimulus assembled and hashed by build_prompt.py; fixtures pinned. |
 | Expected | The caller delegates the bulk work, declines the judgement work, and budgets for the reasoning model -- correct routing in both directions, from the guidance the system supplies. |
 | **Falsifier** | Routing wrong in either direction: delegating the judgement task, or grinding through 80 titles and 24 reports inline. Either would show the system does not convey when delegation is appropriate. NOTE this does NOT test the skill's marginal contribution over the tool descriptions -- see D-01 -- it tests that the system as shipped conveys it. |
-| Observed | PASSED 2026-09-12 across four cases and both arms -- eight runs. Bulk work delegated to a local model in every arm that faced it; the judgement task declined by every arm with a stated reason; 4000-token budgets set for the reasoning model by every arm; 24/24 aligned by tag on the batch-size case. Every prompt hashed, fixtures verified against MANIFEST.json before the run. Each run is recorded with its prompt hash and its evidence. |
+| Observed | PASSED 2026-09-12 on ENV-6 across four cases and both arms -- eight runs. Bulk work delegated to a local model in every arm that faced it; the judgement task declined by every arm with a stated reason; 4000-token budgets set for the reasoning model by every arm; 24/24 aligned by tag on the batch-size case. Every prompt hashed, fixtures verified against MANIFEST.json before the run. Each run is recorded with its prompt hash and its evidence. |
 
 ## Inspection — settled by reading, not by running  (9)
 
