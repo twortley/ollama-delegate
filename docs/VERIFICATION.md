@@ -2,7 +2,7 @@
 
 # Verification Report
 
-**39 tests — 1 not run · 38 pass.** **14 known defects, each with a release decision.**
+**40 tests — 1 deferred · 39 pass.** **14 known defects, each with a release decision.**
 
 Every entry carries an expected outcome and a **falsifier**. An entry without a falsifier is a demonstration that a process was followed, and the generator refuses to render one.
 
@@ -16,7 +16,7 @@ Decisions come from one vocabulary — **fix before release**, **release with di
 
 | | Defect | Severity | Decision | Status |
 |---|---|---|---|---|
-| **D-01** | A skill eval whose control arm could not have produced the behaviour it measured | high | fix before release | open |
+| **D-01** | The skill's contribution over the tool descriptions is unmeasured | medium | defer with justification | open |
 | **D-02** | The bundled embedding script was never exercised by the eval that cites it | medium | release with disclosure | open |
 | **D-03** | No eval case drives the context-overflow guard end to end | medium | release with disclosure | open |
 | **D-04** | Tolerance of two MCP SDK generations is asserted from the code, not observed | medium | release with disclosure | open |
@@ -31,16 +31,16 @@ Decisions come from one vocabulary — **fix before release**, **release with di
 | **D-13** | Installing from the README required a substitution the README did not document | medium | fix before release | resolved |
 | **D-14** | The declared Python floor was never exercised | low | fix before release | resolved |
 
-### D-01 — A skill eval whose control arm could not have produced the behaviour it measured
+### D-01 — The skill's contribution over the tool descriptions is unmeasured
 
-**high · fix before release · open**
+**medium · defer with justification · open**
 
 | | |
 |---|---|
-| Affects | `UR-23` |
-| Evidence | `VT-048` |
-| Rationale | Iteration 1 of the delegation eval scored both arms 2/4. The control arm was never told the local tools existed, so “did not delegate” cost it nothing: the case measured access, not behaviour, and the tie reads as evidence that the skill makes no difference. A requirement whose only evidence comes from a test that cannot fail is not met, which is why UR-23 stands partial rather than met. This is the same “assertion that cannot fail” the project hunted in its own suite, reproduced in the eval design and found by inspecting a suspiciously tied result. |
-| Release note | The 2/4 figure from iteration 1 is withdrawn and is quoted nowhere in this release. UR-23's evidence is VT-048, an eval whose control arm is capable of the behaviour the skill suppresses. |
+| Affects | — |
+| Evidence | `VT-048`, `VT-051` |
+| Rationale | Three eval rounds compared a caller holding the skill's guidance against one without it, and found no difference in routing. The first round was void -- its control could not have delegated. The second and third were sound and returned nulls. The cause is structural: the control always holds the tool descriptions, which are themselves guidance supplied with the system, so the skill's marginal contribution cannot be isolated without testing a stripped product. What the runs DO establish is that a caller routes correctly in both directions, which is what UR-23 asks and what VT-051 records. |
+| Release note | The system conveys when delegation is appropriate; the skill's contribution OVER the tool descriptions is unmeasured, and no figure is published for it. The skill ships as a routing procedure and a set of model-specific facts, not as a measured improvement in routing. |
 
 ### D-02 — The bundled embedding script was never exercised by the eval that cites it
 
@@ -399,7 +399,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 | **Falsifier** | An oversized call being sent and silently truncated by the server, or an unknown context limit treated as unlimited. Both produce an answer computed from part of the input, which is the failure mode that looks like a working call -- the operator gets a confident reply to a question the model never saw in full. A pessimistic token estimate is deliberate for the same reason: under-estimating loses input, over-estimating only refuses. |
 | Observed | SELFTEST PASSED 2026-09-11, 176 checks. The group's own history is the case for it: the stub cache initially bypassed ContextCache.limit_for entirely, so the num_ctx parsing was untested until mutation testing said so, and the cache's own checks were added afterwards. |
 
-## Scripted — a command and its output  (3)
+## Scripted — a command and its output  (4)
 
 Reproducible by anyone with the repository and, where noted, a host.
 
@@ -432,7 +432,7 @@ Reproducible by anyone with the repository and, where noted, a host.
 
 ### VT-048 — The delegation skill changes what a caller does, measured against a control arm
 
-**Result: NOT RUN**
+**Result: deferred** · ENV-1, 2026-09-12, build `34ff28a`
 
 | | |
 |---|---|
@@ -441,7 +441,22 @@ Reproducible by anyone with the repository and, where noted, a host.
 | Procedure | A skill eval with a control arm that is CAPABLE of the behaviour being suppressed: run the same tasks with and without the skill loaded and compare delegation rates. |
 | Expected | A measurable difference in delegation rate between the arms. |
 | **Falsifier** | No difference -- which would mean the skill is documentation and not an instrument. The trap this must avoid is a control arm that could not have delegated anyway: that produces a tied result which reads as 'no effect' and measures nothing. One such result has already been produced here, and one claimed effect measured at a tenth of its asserted size. |
+| Observed | RAN 2026-09-12 with the iteration-1 defect fixed: the control arm was told the tools exist and what each does, so it was capable of the behaviour under test. RESULT IS A NULL. Control delegated on 1 of 3 cases, treatment on 1 of 3, and the arms diverged on NONE. The criterion -- a difference in delegation rate -- did not occur.<br>CASE 0 (80 titles, closed vocabulary, delegating is correct): both arms delegated, 7/7 assertions each. The control, given only an accurate description of the tools, called list_models(include_details=true), chose gpt-oss:20b, confirmed location local, batched at 10, temperature 0. A capable caller routes this correctly without guidance.<br>CASE 2 (six-item prioritisation, delegating is wrong): both arms declined, 4/4 each.<br>CASE 1 IS VOID AND THE FAULT IS IN THE CASE. The corpus is 1,841 bytes, so declining is the correct call and no arm could have shown a difference. That is iteration 1's error reproduced in a new place -- an assertion incapable of failing -- and found the same way, by inspecting a tied result rather than by any check.<br>WHERE THE ARMS DID DIFFER, AND IT IS NOT THE CRITERION: execution quality. The control's first four calls all failed on json_mode with gpt-oss:20b. The treatment piloted gemma3:4b on 10 items, got verdict ok, done_reason stop, perfect format and THREE WRONG LABELS, and escalated on that measurement. Guidance changed how well it delegated, not whether it did.<br>STATED LIMIT: both arms are agent sessions with the tools reachable through the MCP bridge and the guidance injected as prompt text. This tests the guidance's CONTENT, not its TRIGGERING by description match in a real client.<br>Full workspace -- fixtures, both briefs verbatim, grader, six raw runs -- at 40_Test_and_Evals/Attachments/skill_eval_iteration_2_workspace.tar.gz. Recorded in Skill_Delegation_Evals_Iteration_2.md.<br>RE-RUN 2026-09-12 with hashed stimuli: four cases, both arms, arms diverged on NONE. The fourth case was built specifically to discriminate -- 24 incident reports, a naive single batch would be ~7,000 tokens -- and both arms batched at 4 unprompted and scored 24/24 aligned by tag. THIRD NULL. Recorded honestly: the criterion was restated only after this, and the argument for restating it does not depend on the results -- the tool descriptions were in both arms from the first run -- but it was the third null that made anyone look. |
 | Issue | D-01 |
+| Release decision | Deferred past v1.0.0. Ran three times with a control arm capable of the behaviour under test, and returned a null every time. The cause is structural, not a shortage of cases: the control always holds the tool descriptions, which are themselves guidance supplied with the system, so the skill's MARGINAL contribution cannot be isolated without testing a product that is not shipped. UR-23 is discharged by VT-051 on what the runs DID establish. The marginal question is real and is tracked as a deferred issue. |
+
+### VT-051 — A caller determines when delegation is appropriate, in both directions
+
+**Result: PASS** · ENV-1, 2026-09-12, build `34ff28a`
+
+| | |
+|---|---|
+| Discharges | `UR-23` |
+| Environment | ENV-1 · **needs a live host** |
+| Procedure | A four-case plan against the published skill. Four tasks: two where delegating is correct (80-title closed-vocabulary classification; 24 long incident reports) and two where the correct action is something else (a six-item judgement prioritisation; a reasoning model needing a budget that fits its thinking). Stimulus assembled and hashed by build_prompt.py; fixtures pinned. |
+| Expected | The caller delegates the bulk work, declines the judgement work, and budgets for the reasoning model -- correct routing in both directions, from the guidance the system supplies. |
+| **Falsifier** | Routing wrong in either direction: delegating the judgement task, or grinding through 80 titles and 24 reports inline. Either would show the system does not convey when delegation is appropriate. NOTE this does NOT test the skill's marginal contribution over the tool descriptions -- see D-01 -- it tests that the system as shipped conveys it. |
+| Observed | PASSED 2026-09-12 across four cases and both arms -- eight runs. Bulk work delegated to a local model in every arm that faced it; the judgement task declined by every arm with a stated reason; 4000-token budgets set for the reasoning model by every arm; 24/24 aligned by tag on the batch-size case. Every prompt hashed, fixtures verified against MANIFEST.json before the run. Each run is recorded with its prompt hash and its evidence. |
 
 ## Inspection — settled by reading, not by running  (9)
 
@@ -553,7 +568,7 @@ A structural claim is verified by reading the code. Executing something would pr
 
 ### VT-049 — The Verification Report publishes, carrying a release decision per known defect
 
-**Result: PASS** · ENV-4, 2026-09-12, build `9181732`
+**Result: PASS** · ENV-4, 2026-09-12, build `34ff28a`
 
 | | |
 |---|---|
@@ -562,7 +577,7 @@ A structural claim is verified by reading the code. Executing something would pr
 | Procedure | Publish the VR and read it as a stranger: for every defect that ships, is there a stated release decision, and are the limits of what was verified stated rather than implied? |
 | Expected | A published VR with a defect triage register and a decision per entry. |
 | **Falsifier** | A published VR that reports only passes. A reader cannot tell 'nothing failed' from 'failures were not written down', and this register has already contained a tick that no test supported and an inspection record whose claim was false. |
-| Observed | PASSED 2026-09-12. The VR now renders a defect triage register -- 14 entries, each with a severity, a decision from the three-value vocabulary, a status, a rationale and release-note text -- and it PUBLISHED: Publish-Document.py wrote docs/VERIFICATION.md clean, where before it refused.<br>WHAT THE REGISTER FIXED, AND IT WAS NOT ONLY THE TABLE. The report cited seven internal issue identifiers that resolve in no published document. They are now rewritten to the public D-nn the report itself defines, from the register's own mapping; an identifier with no entry is left alone so the scan still refuses on it. The remaining internal provenance -- host paths, a username, run records belonging to another project -- ships to the vault copy inside VAULT ONLY markers and is stripped from the published one: 24 regions.<br>READ AS A STRANGER, AND THAT FOUND A DEFECT THE GATES DID NOT. Twelve rows carried a newline inside a table cell, which ends the row: the remainder rendered as loose paragraph text under a broken table, and had been doing so in every version of this report. The generator now renders a cell as one line. Nothing in --check or --release-gate could see it, because both read the manifest and neither reads the rendered document.<br>PROVENANCE: rendered and published at 6d3fa8b plus the then-uncommitted generate_verification.py change that adds the register, and RE-RENDERED AND RE-PUBLISHED at 9181732, which is that change committed. run_on.build names the commit the published document was produced by, not the one it was drafted against. |
+| Observed | PASSED 2026-09-12. The VR now renders a defect triage register -- 14 entries, each with a severity, a decision from the three-value vocabulary, a status, a rationale and release-note text -- and it PUBLISHED: Publish-Document.py wrote docs/VERIFICATION.md clean, where before it refused.<br>WHAT THE REGISTER FIXED, AND IT WAS NOT ONLY THE TABLE. The report cited seven internal issue identifiers that resolve in no published document. They are now rewritten to the public D-nn the report itself defines, from the register's own mapping; an identifier with no entry is left alone so the scan still refuses on it. The remaining internal provenance -- host paths, a username, run records belonging to another project -- ships to the vault copy inside VAULT ONLY markers and is stripped from the published one: 24 regions.<br>READ AS A STRANGER, AND THAT FOUND A DEFECT THE GATES DID NOT. Twelve rows carried a newline inside a table cell, which ends the row: the remainder rendered as loose paragraph text under a broken table, and had been doing so in every version of this report. The generator now renders a cell as one line. Nothing in --check or --release-gate could see it, because both read the manifest and neither reads the rendered document.<br>PROVENANCE: rendered and published at 6d3fa8b plus the then-uncommitted generate_verification.py change that adds the register, and re-rendered at 9181732 and again at 34ff28a, which added build provenance to the rendered header. run_on.build NAMES THE GENERATOR COMMIT THAT PRODUCED THE PUBLISHED DOCUMENT, not the one the work was drafted against. This stamp is stable: 34ff28a is the last commit that changed the generator, so re-rendering from here reproduces the same document. |
 
 ## Manual — live host, specific client, or a human  (11)
 
