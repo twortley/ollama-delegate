@@ -460,8 +460,14 @@ def render(data: dict, findings: list[str]) -> str:
                 f"### {t['id']} — {pub(t['title'])}",
                 "",
                 f"**Result: {MARK.get(t.get('result'), t.get('result'))}**"
+                # `build` is rendered because it is REQUIRED on a live-host
+                # result and was reaching no reader: 23 of these entries carried
+                # one and the report printed none of them. An `unknown` is the
+                # half that matters most -- that value exists to be seen, not to
+                # sit in the register satisfying a gate.
                 + (f" · {t['run_on']['env']}, {t['run_on']['date']}"
                    f"{', Python ' + t['run_on']['python'] if t['run_on'].get('python') else ''}"
+                   f"{', build `' + t['run_on']['build'] + '`' if t['run_on'].get('build') else ''}"
                    if t.get("run_on") else ""),
                 "",
                 f"| | |", "|---|---|",

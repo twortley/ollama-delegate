@@ -230,7 +230,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-004 — Assertions in the suite can actually fail
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15, build `6d3fa8b`
 
 | | |
 |---|---|
@@ -295,7 +295,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-034 — index_list reports source_root from the header
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12, build `20e3927`
 
 | | |
 |---|---|
@@ -309,7 +309,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-030 — The guard refuses all three corrupting actions
 
-**Result: PASS** · ENV-4, 2026-08-30, Python 3.10.12
+**Result: PASS** · ENV-4, 2026-08-30, Python 3.10.12, build `554d687`
 
 | | |
 |---|---|
@@ -322,7 +322,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-032 — A timeout reaches the operator as a stated cause and a remedy, not a traceback
 
-**Result: PASS** · ENV-4, 2026-08-31, Python 3.10.12
+**Result: PASS** · ENV-4, 2026-08-31, Python 3.10.12, build `57a6bab`
 
 | | |
 |---|---|
@@ -336,7 +336,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-033 — index_search reports built_at and names the staleness check rather than estimating
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12, build `a1f681c`
 
 | | |
 |---|---|
@@ -349,7 +349,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-035 — Every environment variable is documented at its default, and its effect is reported
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.10.12, build `e1b0cdb`
 
 | | |
 |---|---|
@@ -362,7 +362,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-042 — A rebuild reuses the files whose content did not change, and only those
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15, build `6d3fa8b`
 
 | | |
 |---|---|
@@ -375,7 +375,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-043 — Reranking batches five passages at a time, because the batch size is a correctness parameter
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15, build `6d3fa8b`
 
 | | |
 |---|---|
@@ -388,7 +388,7 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 
 ### VT-050 — Oversized input is refused before the call, and proceeding anyway has to be asked for
 
-**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15
+**Result: PASS** · ENV-4, 2026-09-11, Python 3.11.15, build `6d3fa8b`
 
 | | |
 |---|---|
@@ -405,7 +405,7 @@ Reproducible by anyone with the repository and, where noted, a host.
 
 ### VT-020 — A 10-result search fits the stated context budget
 
-**Result: PASS** · ENV-1, 2026-08-30, Python 3.14.4
+**Result: PASS** · ENV-1, 2026-08-30, Python 3.14.4, build `unknown — pre-commit working tree`
 
 | | |
 |---|---|
@@ -462,7 +462,7 @@ A structural claim is verified by reading the code. Executing something would pr
 
 ### VT-022 — The README carries the claims the URS makes about it
 
-**Result: PASS** · ENV-4, 2026-09-11
+**Result: PASS** · ENV-4, 2026-09-11, build `1e7a2d3`
 
 | | |
 |---|---|
@@ -553,7 +553,7 @@ A structural claim is verified by reading the code. Executing something would pr
 
 ### VT-049 — The Verification Report publishes, carrying a release decision per known defect
 
-**Result: PASS** · ENV-4, 2026-09-12
+**Result: PASS** · ENV-4, 2026-09-12, build `9181732`
 
 | | |
 |---|---|
@@ -562,7 +562,7 @@ A structural claim is verified by reading the code. Executing something would pr
 | Procedure | Publish the VR and read it as a stranger: for every defect that ships, is there a stated release decision, and are the limits of what was verified stated rather than implied? |
 | Expected | A published VR with a defect triage register and a decision per entry. |
 | **Falsifier** | A published VR that reports only passes. A reader cannot tell 'nothing failed' from 'failures were not written down', and this register has already contained a tick that no test supported and an inspection record whose claim was false. |
-| Observed | PASSED 2026-09-12. The VR now renders a defect triage register -- 14 entries, each with a severity, a decision from the three-value vocabulary, a status, a rationale and release-note text -- and it PUBLISHED: Publish-Document.py wrote docs/VERIFICATION.md clean, where before it refused.<br>WHAT THE REGISTER FIXED, AND IT WAS NOT ONLY THE TABLE. The report cited seven internal issue identifiers that resolve in no published document. They are now rewritten to the public D-nn the report itself defines, from the register's own mapping; an identifier with no entry is left alone so the scan still refuses on it. The remaining internal provenance -- host paths, a username, run records belonging to another project -- ships to the vault copy inside VAULT ONLY markers and is stripped from the published one: 24 regions.<br>READ AS A STRANGER, AND THAT FOUND A DEFECT THE GATES DID NOT. Twelve rows carried a newline inside a table cell, which ends the row: the remainder rendered as loose paragraph text under a broken table, and had been doing so in every version of this report. The generator now renders a cell as one line. Nothing in --check or --release-gate could see it, because both read the manifest and neither reads the rendered document.<br>PROVENANCE: rendered and published at 6d3fa8b PLUS the uncommitted generate_verification.py change that adds the register. Not backfilled with a SHA it did not run at -- set run_on.build to the commit that carries that change. |
+| Observed | PASSED 2026-09-12. The VR now renders a defect triage register -- 14 entries, each with a severity, a decision from the three-value vocabulary, a status, a rationale and release-note text -- and it PUBLISHED: Publish-Document.py wrote docs/VERIFICATION.md clean, where before it refused.<br>WHAT THE REGISTER FIXED, AND IT WAS NOT ONLY THE TABLE. The report cited seven internal issue identifiers that resolve in no published document. They are now rewritten to the public D-nn the report itself defines, from the register's own mapping; an identifier with no entry is left alone so the scan still refuses on it. The remaining internal provenance -- host paths, a username, run records belonging to another project -- ships to the vault copy inside VAULT ONLY markers and is stripped from the published one: 24 regions.<br>READ AS A STRANGER, AND THAT FOUND A DEFECT THE GATES DID NOT. Twelve rows carried a newline inside a table cell, which ends the row: the remainder rendered as loose paragraph text under a broken table, and had been doing so in every version of this report. The generator now renders a cell as one line. Nothing in --check or --release-gate could see it, because both read the manifest and neither reads the rendered document.<br>PROVENANCE: rendered and published at 6d3fa8b plus the then-uncommitted generate_verification.py change that adds the register, and RE-RENDERED AND RE-PUBLISHED at 9181732, which is that change committed. run_on.build names the commit the published document was produced by, not the one it was drafted against. |
 
 ## Manual — live host, specific client, or a human  (11)
 
@@ -570,7 +570,7 @@ Written so someone who was not present can run them.
 
 ### VT-010 — `generate` applies the model's chat template
 
-**Result: PASS** · ENV-1, 2026-08-30, Python 3.14.4
+**Result: PASS** · ENV-1, 2026-08-30, Python 3.14.4, build `554d687`
 
 | | |
 |---|---|
@@ -583,7 +583,7 @@ Written so someone who was not present can run them.
 
 ### VT-011 — Install from the README on a machine that is not the development host
 
-**Result: PASS** · ENV-2, 2026-08-31, Python 3.12.3
+**Result: PASS** · ENV-2, 2026-08-31, Python 3.12.3, build `554d687`
 
 | | |
 |---|---|
@@ -597,7 +597,7 @@ Written so someone who was not present can run them.
 
 ### VT-012 — `status` names a file whose content changed
 
-**Result: PASS** · ENV-1, 2026-09-11
+**Result: PASS** · ENV-1, 2026-09-11, build `a1f681c`
 
 | | |
 |---|---|
@@ -610,7 +610,7 @@ Written so someone who was not present can run them.
 
 ### VT-012W — Install from the README on a Windows machine that is not the development host
 
-**Result: PASS** · ENV-5, 2026-08-31, Python 3.14
+**Result: PASS** · ENV-5, 2026-08-31, Python 3.14, build `554d687`
 
 | | |
 |---|---|
@@ -623,7 +623,7 @@ Written so someone who was not present can run them.
 
 ### VT-013 — Two indexes coexist without leaking into each other
 
-**Result: PASS** · ENV-1, 2026-09-09
+**Result: PASS** · ENV-1, 2026-09-09, build `a1f681c`
 
 | | |
 |---|---|
@@ -636,7 +636,7 @@ Written so someone who was not present can run them.
 
 ### VT-014 — A refusal reaches the operator through a second MCP client
 
-**Result: PASS** · ENV-3, 2026-08-31
+**Result: PASS** · ENV-3, 2026-08-31, build `554d687`
 
 | | |
 |---|---|
@@ -650,7 +650,7 @@ Written so someone who was not present can run them.
 
 ### VT-015 — index_list identifies each index's purpose and provenance without opening it
 
-**Result: PASS** · ENV-1, 2026-09-11
+**Result: PASS** · ENV-1, 2026-09-11, build `20e3927`
 
 | | |
 |---|---|
@@ -664,7 +664,7 @@ Written so someone who was not present can run them.
 
 ### VT-031 — Can a refusal be reached, and seen, through a live client?
 
-**Result: PASS** · ENV-1, 2026-08-31, Python 3.14.4
+**Result: PASS** · ENV-1, 2026-08-31, Python 3.14.4, build `554d687`
 
 | | |
 |---|---|
@@ -678,7 +678,7 @@ Written so someone who was not present can run them.
 
 ### VT-040 — ENV-3 enumerates the tools and renders `location` on every model
 
-**Result: PASS** · ENV-3, 2026-08-31
+**Result: PASS** · ENV-3, 2026-08-31, build `554d687`
 
 | | |
 |---|---|
@@ -691,7 +691,7 @@ Written so someone who was not present can run them.
 
 ### VT-041 — ENV-3 completes a real model call and reports where it ran
 
-**Result: PASS** · ENV-3, 2026-08-31
+**Result: PASS** · ENV-3, 2026-08-31, build `554d687`
 
 | | |
 |---|---|
@@ -704,7 +704,7 @@ Written so someone who was not present can run them.
 
 ### VT-047 — `show_model` and `list_running` return what the specification says they return
 
-**Result: PASS** · ENV-3, 2026-09-11
+**Result: PASS** · ENV-3, 2026-09-11, build `6d3fa8b`
 
 | | |
 |---|---|
