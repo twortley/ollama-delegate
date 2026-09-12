@@ -443,7 +443,7 @@ def chunk_text(text: str, max_chars: int) -> list[dict[str, Any]]:
         # A single paragraph over the limit has to be split on its own. Each
         # piece cites the lines IT occupies, not the whole block's range.
         #
-        # Measured on the real HOMELAB corpus, 2026-08-30: a 204-line note with
+        # Measured on a real markdown corpus, 2026-08-30: a 204-line note with
         # no blank line anywhere is one block, and citing the block for every
         # slice gave `lines: [1, 204]` on each -- a citation pointing at the
         # whole file, which is true and useless. The pieces are character slices

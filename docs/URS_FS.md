@@ -455,7 +455,7 @@ Each function names the `UR` it exists to satisfy.
 > specification that publishes its own gaps is more credible than one that does
 > not, not less.**
 >
-> **It publishes to `docs/URS_FS.md`.** `Target_Repo_Layout.md` updated the same
+> **It publishes to `docs/URS_FS.md`.** The repository layout note updated the same
 > day.
 
 ---
@@ -517,9 +517,15 @@ function is unparented and no requirement is unsatisfied.
 ## 8. Related
 
 **Published and linkable:** `README.md` · [Design Specification](DESIGN.md) ·
-`SECURITY.md` · `LICENSE`
+[Verification Report](VERIFICATION.md) · `SECURITY.md` · `LICENSE`
 
 **Specified but not yet published** — named rather than linked, because a link to
 a document that does not exist is worse than no link: `docs/MANUAL.md` (DOC-02) ·
-`docs/VERIFICATION.md` (DOC-04) · `THREAT_MODEL.md` (DOC-05)
+`THREAT_MODEL.md` (DOC-05)
+
+> **Corrected 2026-09-12.** This list carried `docs/VERIFICATION.md` as *not yet
+> published* on the day it was published. **A list of what exists is a claim
+> about the repository, and nothing checks it** — the same class as the three
+> rendering defects found the same day. It is the first thing a reader can
+> falsify by typing `ls`.
 

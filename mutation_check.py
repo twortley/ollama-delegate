@@ -92,7 +92,7 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     ("ollama_server.py", 'os.environ.get("OLLAMA_MCP_LOGLEVEL", "INFO")',
      'os.environ.get("OLLAMA_MCP_VERBOSITY", "INFO")',
      "read an environment variable the README does not document"),
-    # --- descriptions and remedies an agent reads (BLI-031) ---------------
+    # --- descriptions and remedies an agent reads ------------------------
     ("ollama_server.py",
      "        Disabled unless OLLAMA_MCP_ALLOW_PULL=1 is set in the server\n"
      "        environment.\n",

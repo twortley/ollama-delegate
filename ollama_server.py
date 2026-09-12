@@ -249,7 +249,7 @@ class Refused(Exception):
 
 # The two write gates, their tool names and the flag that opens each. ONE source:
 # Guard.check raises with `_gate_remedy`, and server_info reports the same text.
-# BLI-039: a state with no remedy is what sent an agent inventing
+# A state with no remedy is what sent a client inventing
 # ALLOW_MODEL_PULL and a `confirm` parameter, both plausible and neither real.
 WRITE_GATES: dict[str, tuple[str, str]] = {
     "pull": ("pull_model", "OLLAMA_MCP_ALLOW_PULL"),
@@ -1269,7 +1269,7 @@ def register(mcp: Any, config: Config) -> None:
                 "pull_model": "enabled" if config.allow_pull else "disabled",
                 "delete_model": "enabled" if config.allow_delete else "disabled",
             },
-            # BLI-039: reporting "disabled" without naming the flag left the
+            # Reporting "disabled" without naming the flag left the
             # reader to guess, and a second client guessed ALLOW_MODEL_PULL and a
             # per-call `confirm` argument. A state with no remedy is the same
             # defect UR-06 names for failures, in the configuration report.
@@ -1351,7 +1351,7 @@ def selftest() -> int:
         check("scheme with no host is refused", "no host" in str(exc))
 
     print("Tool descriptions answer the questions agents ask of them")
-    # BLI-031: an agent reasoning from the schemas alone predicted the OPPOSITE
+    # An agent reasoning from the schemas alone once predicted the OPPOSITE
     # of the truth -- that pull_model was ungated and a multi-gigabyte download
     # was about to start -- because only delete_model documented its flag. A
     # description that understates enforcement is read as a promise, so these
@@ -1396,7 +1396,7 @@ def selftest() -> int:
                   "MCP client" in exc.remedy
                   and not any(c in exc.remedy for c in clients))
 
-    # BLI-039: server_info is the surface agents read instead of calling, and it
+    # server_info is the surface agents read instead of calling, and it once
     # reported a state with no remedy. These assertions tie the report to the
     # refusal so the two cannot drift, and so a new gate cannot ship without one.
     info = registered["server_info"]()
