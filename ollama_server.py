@@ -53,6 +53,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -246,6 +247,23 @@ class Refused(Exception):
         super().__init__(reason)
 
 
+# The two write gates, their tool names and the flag that opens each. ONE source:
+# Guard.check raises with `_gate_remedy`, and server_info reports the same text.
+# BLI-039: a state with no remedy is what sent an agent inventing
+# ALLOW_MODEL_PULL and a `confirm` parameter, both plausible and neither real.
+WRITE_GATES: dict[str, tuple[str, str]] = {
+    "pull": ("pull_model", "OLLAMA_MCP_ALLOW_PULL"),
+    "delete": ("delete_model", "OLLAMA_MCP_ALLOW_DELETE"),
+}
+
+
+def _gate_remedy(flag: str) -> str:
+    """How to open a gate, worded once and used wherever it is reported."""
+    return (f"Set {flag}=1 in the server environment and "
+            "restart the MCP client. This is deliberately not settable "
+            "from a tool call or a config file.")
+
+
 class Guard:
     """
     Every state-changing or model-naming call routes through here.
@@ -263,17 +281,13 @@ class Guard:
             raise Refused(
                 "not_permitted",
                 "delete_model is disabled on this server.",
-                "Set OLLAMA_MCP_ALLOW_DELETE=1 in the server environment and "
-                "restart Claude Desktop. This is deliberately not settable "
-                "from a tool call or a config file.",
+                _gate_remedy(WRITE_GATES["delete"][1]),
             )
         if op == "pull" and not self.config.allow_pull:
             raise Refused(
                 "not_permitted",
                 "pull_model is disabled on this server.",
-                "Set OLLAMA_MCP_ALLOW_PULL=1 in the server environment and "
-                "restart the MCP client. This is deliberately not settable "
-                "from a tool call or a config file.",
+                _gate_remedy(WRITE_GATES["pull"][1]),
             )
 
         # -- model allowlist -------------------------------------------------
@@ -471,7 +485,7 @@ class ContextCache:
     """
     Per-model context limits, fetched once per process from /api/show.
 
-    A stdio server lives for one Claude Desktop session and models do not
+    A stdio server lives for one MCP client session and models do not
     change size mid-session, so a process-lifetime cache needs no invalidation.
     """
 
@@ -1195,6 +1209,9 @@ def register(mcp: Any, config: Config) -> None:
         Prefer naming an explicit tag (llama3.1:8b) over a bare name, which
         resolves to :latest and may be far larger than expected.
 
+        Disabled unless OLLAMA_MCP_ALLOW_PULL=1 is set in the server
+        environment.
+
         Args:
             model: model name to pull, ideally with an explicit tag.
         """
@@ -1252,9 +1269,20 @@ def register(mcp: Any, config: Config) -> None:
                 "pull_model": "enabled" if config.allow_pull else "disabled",
                 "delete_model": "enabled" if config.allow_delete else "disabled",
             },
+            # BLI-039: reporting "disabled" without naming the flag left the
+            # reader to guess, and a second client guessed ALLOW_MODEL_PULL and a
+            # per-call `confirm` argument. A state with no remedy is the same
+            # defect UR-06 names for failures, in the configuration report.
+            write_gates={
+                tool: _gate_remedy(flag) for tool, flag in WRITE_GATES.values()
+            },
             model_allowlist=list(config.model_allowlist) or "none (any local model)",
             timeout_s=config.timeout,
             pull_timeout_s=config.pull_timeout,
+            # UR-03 says every variable's effect is visible here. Without this
+            # line, OLLAMA_MCP_LOGLEVEL was the one exception -- readable from
+            # the environment and invisible in the report.
+            log_level=logging.getLevelName(log.getEffectiveLevel()),
             # A005, 2026-08-29: a diligent client reads server_info and never
             # makes the refused call, which makes this the load-bearing surface
             # and the verdict strings the backstop. So the index tools have to
@@ -1321,6 +1349,108 @@ def selftest() -> int:
         check("scheme with no host is refused", False)
     except ValueError as exc:
         check("scheme with no host is refused", "no host" in str(exc))
+
+    print("Tool descriptions answer the questions agents ask of them")
+    # BLI-031: an agent reasoning from the schemas alone predicted the OPPOSITE
+    # of the truth -- that pull_model was ungated and a multi-gigabyte download
+    # was about to start -- because only delete_model documented its flag. A
+    # description that understates enforcement is read as a promise, so these
+    # assertions treat the docstrings as a shipped surface, not as comments.
+    registered: dict[str, Any] = {}
+
+    class _CollectMCP:
+        def tool(self):
+            def decorate(fn):
+                registered[fn.__name__] = fn
+                return fn
+            return decorate
+
+    register(_CollectMCP(), Config())
+    # Adding a gated tool means adding it here. The pairing is explicit so that
+    # a new gate with no documentation fails this suite rather than shipping.
+    for tool_name, flag in (("pull_model", "OLLAMA_MCP_ALLOW_PULL"),
+                            ("delete_model", "OLLAMA_MCP_ALLOW_DELETE")):
+        doc = registered[tool_name].__doc__ or ""
+        check(f"{tool_name}'s description names its own gate", flag in doc)
+
+    # The server cannot know which client is connected, so naming one in text a
+    # caller reads is wrong for every other client. Observed live on ENV-3: a
+    # Gemini-based client displayed "restart Claude Desktop" as the way out of a
+    # refusal.
+    clients = ("Claude Desktop", "Claude Code", "Cowork", "Antigravity")
+    named_in_docs = sorted(
+        f"{name}: {client}"
+        for name, fn in registered.items()
+        for client in clients
+        if client in (fn.__doc__ or "")
+    )
+    check("no tool description names a specific client", not named_in_docs)
+
+    for op, flag in (("pull", "OLLAMA_MCP_ALLOW_PULL"),
+                     ("delete", "OLLAMA_MCP_ALLOW_DELETE")):
+        try:
+            Guard(Config()).check(op, "llama3")
+            check(f"{op} refusal carries a client-agnostic remedy", False)
+        except Refused as exc:
+            check(f"{op} refusal carries a client-agnostic remedy",
+                  "MCP client" in exc.remedy
+                  and not any(c in exc.remedy for c in clients))
+
+    # BLI-039: server_info is the surface agents read instead of calling, and it
+    # reported a state with no remedy. These assertions tie the report to the
+    # refusal so the two cannot drift, and so a new gate cannot ship without one.
+    info = registered["server_info"]()
+    # .get, not [] -- a missing key must FAIL these assertions, not crash the
+    # suite. A mutant caught by a traceback is caught for the wrong reason, and
+    # the next one that changes wording rather than shape would slip past.
+    gates = info.get("write_gates", {})
+    check("every gated operation in write_operations has a gate remedy",
+          set(gates) == set(info["write_operations"]))
+    for op, (tool, flag) in WRITE_GATES.items():
+        check(f"{tool}'s gate remedy names its own flag", flag in gates[tool])
+        try:
+            Guard(Config()).check(op, "llama3")
+            check(f"{tool}'s reported remedy is the refusal's own wording", False)
+        except Refused as exc:
+            # Not "both mention the flag" -- IDENTICAL. Two nearly-equal strings
+            # is how a remedy goes stale in one place only.
+            check(f"{tool}'s reported remedy is the refusal's own wording",
+                  gates[tool] == exc.remedy)
+    check("no gate remedy names a specific client",
+          not any(c in text for text in gates.values() for c in clients))
+    check("server_info reports the log level, so every variable's effect shows",
+          isinstance(info.get("log_level"), str) and info["log_level"] != "")
+
+    print("Configuration is discoverable without reading source")
+    # UR-03: the variables must be findable in the README, at their defaults.
+    # OLLAMA_MCP_LOGLEVEL was read by this file and named nowhere in it -- the
+    # same class the DS generator caught in August, found again by asking the
+    # question mechanically instead of by eye.
+    _here = Path(__file__).resolve().parent
+    _sources = [_here / name for name in
+                ("ollama_server.py", "index_tools.py", "vault_index.py")]
+    # Built in two pieces so this pattern does not match itself in this file.
+    _var = re.compile("OLLAMA" + r"(?:_MCP)?_[A-Z][A-Z_]*[A-Z]")
+    read_names = sorted({
+        name
+        for src in _sources if src.exists()
+        for name in _var.findall(src.read_text(encoding="utf-8"))
+    })
+    check("the environment scan finds the variables at all", len(read_names) >= 6)
+    _readme = _here / "README.md"
+    if not _readme.exists():
+        # An installed copy without the repository cannot be checked. Say so
+        # rather than passing quietly: a skipped check that prints nothing is
+        # indistinguishable from one that held.
+        print("  ! README.md is not beside this file, so the documentation "
+              "check did NOT run")
+    else:
+        _text = _readme.read_text(encoding="utf-8")
+        undocumented = [name for name in read_names if name not in _text]
+        check("every environment variable the code reads is named in the README",
+              not undocumented)
+        if undocumented:
+            print(f"       undocumented: {', '.join(undocumented)}")
 
     print("Delete gating")
     locked = Guard(Config(allow_delete=False))

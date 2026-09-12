@@ -82,6 +82,34 @@ MUTANTS: list[tuple[str, str, str, str]] = [
      'block["start"]', "cite the block start for every slice of it"),
     ("vault_index.py", 'block["start"] + para.count("\\n", 0, stop)',
      'block["end"]', "cite the block end for every slice of it"),
+    # --- configuration is discoverable (UR-03) ----------------------------
+    # Mutate the CODE, not the README: the realistic defect is a new variable
+    # arriving in the source with nothing written about it, which is how
+    # OLLAMA_MCP_LOGLEVEL came to exist undocumented. A mutant that deleted the
+    # table row SURVIVED, because the name is also in the defaults block -- the
+    # assertion checks the document, not one row of it. Correct, and worth
+    # recording: the first version of this mutant tested the wrong thing.
+    ("ollama_server.py", 'os.environ.get("OLLAMA_MCP_LOGLEVEL", "INFO")',
+     'os.environ.get("OLLAMA_MCP_VERBOSITY", "INFO")',
+     "read an environment variable the README does not document"),
+    # --- descriptions and remedies an agent reads (BLI-031) ---------------
+    ("ollama_server.py",
+     "        Disabled unless OLLAMA_MCP_ALLOW_PULL=1 is set in the server\n"
+     "        environment.\n",
+     "",
+     "undocument pull_model's gate, so the schema understates enforcement"),
+    ("ollama_server.py",
+     "            write_gates={\n"
+     "                tool: _gate_remedy(flag) for tool, flag in WRITE_GATES.values()\n"
+     "            },\n",
+     "",
+     "drop write_gates, so server_info reports a state with no remedy"),
+    ("ollama_server.py", 'return (f"Set {flag}=1 in the server environment and "',
+     'return (f"Set the flag in the server environment and "',
+     "report how to open a gate without naming the flag"),
+    ("ollama_server.py", '"restart the MCP client. This is deliberately not settable "',
+     '"restart Claude Desktop. This is deliberately not settable "',
+     "name one client in a refusal remedy every client receives"),
     # --- the tool surface -------------------------------------------------
     ("index_tools.py", '"source_root": got("source_root"),', "",
      "drop source_root from index_list, which UR-12 requires"),
@@ -137,8 +165,12 @@ def main() -> int:
     survived, missing = [], []
     for filename, find, replace, label in MUTANTS:
         work = tempfile.mkdtemp()
+        # README.md travels with the modules: one assertion reads it, to check
+        # that every environment variable the code reads is documented (UR-03).
+        # Without it that check skips in every mutant run, and a mutant that
+        # undocuments a variable could not be caught at all.
         for entry in os.listdir(HERE):
-            if entry.endswith(".py"):
+            if entry.endswith(".py") or entry == "README.md":
                 shutil.copy(os.path.join(HERE, entry), work)
 
         target = os.path.join(work, filename)

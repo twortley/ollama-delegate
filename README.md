@@ -255,10 +255,16 @@ Compress-Archive -Force -Path skills\local-inference-delegation -DestinationPath
 
 **Google Antigravity** reads the same format, from `.agents/skills/` in a workspace
 or `~/.gemini/config/skills/` for every workspace. Copy the folder into either.
-**Expect to adjust the tool-call examples**: if your client dispatches MCP tools
-through a wrapper rather than calling them by name, the examples in the skill
-need that form. Nothing else changes — and the skill already tells an agent to go
-by the tools rather than by the server's registered name.
+Verified there 2026-09-11, unmodified: the skill's own examples call the tools by
+name, and a client that dispatches through a wrapper simply uses its own form.
+
+> **Register the server as `ollama-delegate`, as the config above does.** The skill
+> refers to it by that name, and an agent may not connect the skill's guidance to
+> tools registered under a different one. **That failure is silent** — the tools
+> still answer when you name them in chat, so it looks like the skill simply never
+> applies. Measured on 2026-09-11: with a mismatched name, a delegation-shaped
+> question produced **no tool calls at all**; renaming the server, changing nothing
+> else, produced four.
 
 **Changing the skill: edit it here, not where it is installed.** The copy in
 `skills/` is the source, and an installed copy is a deployment of it. Edit and
@@ -573,6 +579,30 @@ far cheaper than intermittent use.
 | `OLLAMA_MCP_MODELS` | unset | Optional comma-separated model allowlist. Unset means any local model. |
 | `OLLAMA_MCP_TIMEOUT` | `300` | Seconds for generate/chat/embed. |
 | `OLLAMA_MCP_PULL_TIMEOUT` | `3600` | Seconds for pull. |
+| `OLLAMA_MCP_LOGLEVEL` | `INFO` | Log level for the server's own diagnostics, which go to stderr. `DEBUG` is verbose. |
+
+**Every variable, at its default, in one block.** Paste this into your client
+config's `env` and nothing changes — it is the defaults written down, so the
+variables are discoverable without reading source. Delete the lines you do not
+need and edit the ones you do.
+
+```json
+"env": {
+  "OLLAMA_HOST": "http://localhost:11434",
+  "OLLAMA_MCP_INDEX_DIR": "",
+  "OLLAMA_MCP_ALLOW_DELETE": "0",
+  "OLLAMA_MCP_ALLOW_PULL": "0",
+  "OLLAMA_MCP_MODELS": "",
+  "OLLAMA_MCP_TIMEOUT": "300",
+  "OLLAMA_MCP_PULL_TIMEOUT": "3600",
+  "OLLAMA_MCP_LOGLEVEL": "INFO"
+}
+```
+
+**An empty string is not the same as unset for `OLLAMA_MCP_INDEX_DIR`**: the
+`index_*` tools register only when it points at a directory, so leave it empty or
+drop the line to keep them off. `--selftest` refuses to pass if the code reads a
+variable this table does not name.
 
 ## Design notes
 

@@ -526,7 +526,7 @@ Report what this MCP server is configured to do and what it refuses.
 server_info() -> dict[str, Any]
 ```
 
-**Returns on success:** `host`, `write_operations`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `retrieval_tools`, `note`
+**Returns on success:** `host`, `write_operations`, `write_gates`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `log_level`, `retrieval_tools`, `note`
 
 **Verdicts reachable:** `ok`
 
