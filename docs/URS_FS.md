@@ -219,7 +219,7 @@ criterion that names no environment capable of running it is not a criterion.
 |---|---|---|---|---|---|---|
 | **UR-01** | The operator **shall be able to** install and run the system by following documented instructions, without editing source | M | **H** | On a clean container and on the Ubuntu host, follow the manual verbatim; the server starts and enumerates its tools. **No step requires a value not printed in the manual.** ⚠️ **Failed twice on `ENV-2` 2026-08-29** — interpreter path, then `python.exe` surviving into a POSIX client config. Both fixes written, **neither re-proven** | D | ✅ |
 | **UR-02** | The operator **shall be able to** confirm a correct installation without reading source code | M | **H** | On that same clean environment, `--selftest` exits 0 and `--probe` names the reachable host and lists installed models. Both are reachable from the manual's install section. **Met on `ENV-2` 2026-08-29: clean clone, both checks correct, no hand remediation** | T | ✅ |
-| **UR-03** | The operator **shall be able to** configure model access, write permissions and index location without editing code | M | M | Each `OLLAMA_MCP_*` variable changes the permitted operation set, and `server_info` reports the change. No source file is touched. **The documented config example names every variable at its default**, so their existence is discoverable without reading source | T | ◐ |
+| **UR-03** | The operator **shall be able to** configure model access, write permissions and index location without editing code | M | M | Each `OLLAMA_MCP_*` variable changes the permitted operation set, and `server_info` reports the change. No source file is touched. **The documented config example names every variable at its default**, so their existence is discoverable without reading source | T | ✅ |
 | **UR-04** | The operator **shall be able to** determine, for any call, whether content left their machine | M | **H** | Every inference response carries `location`. A `:cloud`-tagged model returns `cloud`; a local model returns `local`. **Exercised on `ENV-2` through a live client: 4 local / 2 cloud split correctly, and the agent volunteered *"the text never left the machine"* unprompted** | T | ✅ |
 | **UR-05** | The operator **shall be able to** index a corpus of their own choosing | M | M | `build` against an arbitrary operator-supplied folder produces an index whose file count equals the folder's `.md` count | D | ✅ |
 | **UR-06** | On failure the operator **shall be able to** obtain a stated cause and a remedy, not a stack trace | M | **H** | Every refusal path returns `verdict`, `reason` and `remedy`. **Each remedy is executed and produces the promised effect** | T | ⚠️ |
@@ -293,7 +293,7 @@ criterion that names no environment capable of running it is not a criterion.
 | **UR-24** | A reader **shall be able to** determine the system's purpose within minutes, led by capability rather than cost   | M   | M     | The README's first screen states what it is for, and **cost is not the leading argument** | I   | ✅      |
 | **UR-25** | A reader **shall be able to** determine the system's non-goals, and what it does not unlock                       | M   | M     | Named *Assumptions and non-goals* section present, including the accountability statement | I   | ✅      |
 | **UR-26** | A reader **shall be able to** determine how this differs from redirecting **Claude Code** at Ollama via `ANTHROPIC_BASE_URL`             | M   | M     | The README answers the question explicitly, by name, and **distinguishes Claude Code from Cowork** rather than treating them as one client                                       | I   | ✅      |
-| **UR-27** | A reader **shall be able to** determine what has been verified, with what limits, and what defects ship knowingly | M   | M     | VR published, carrying the defect triage register with a release decision per entry       | I   | ❌      |
+| **UR-27** | A reader **shall be able to** determine what has been verified, with what limits, and what defects ship knowingly | M   | M     | VR published, carrying the defect triage register with a release decision per entry       | I   | ✅      |
 | **UR-28** | A reader **shall be able to** determine the licence terms                                                         | M   | **H** | `LICENSE` present at repository root and named in the README. **MIT, © 2026 Tim Wortley, written 2026-08-28.** README states the licence covers the specification and verification documents, not only source | I   | ✅ |
 | **UR-32** | A reader **shall be able to** determine what the system was *required* to do, and follow any requirement through to its design and its verification | M | M | **Every `FS`/`UR` identifier cited in a published document resolves within the published set.** Run as a link check, not a judgement: extract every identifier from `docs/*.md`, and fail on any that no published document defines | T | ✅ |
 
@@ -317,9 +317,17 @@ criterion that names no environment capable of running it is not a criterion.
 > something testable. **The broad version is not testable and would be ceremony;
 > the link check finds a defect.**
 >
-> **Status `❌` because the check does not pass today.** The DS cites 35
-> identifiers and none resolves in the published set. Publishing `URS_FS` closes
-> it. **Wording and class are the owner's to rule on.**
+> **Status corrected 2026-09-12.** This block read *"Status `❌` because the
+> check does not pass today — the DS cites 35 identifiers and none resolves in
+> the published set."* **That stopped being true when `URS_FS` was published.**
+> The link check ran 2026-08-31 over the published set and again 2026-09-12 with
+> `VERIFICATION.md` added to it: **62 identifiers cited, 62 defined, none
+> unresolved** (`VT-026`). The row has stood at ✅ since; this prose did not.
+> Stated rather than quietly amended, because prose transcribing a register it
+> never re-read is the defect this document set keeps finding in itself.
+>
+> **Still outstanding, and unchanged: `UR-32` is PROPOSED. Wording and class are
+> the owner's to rule on.**
 
 ### 4.6 Constraints
 

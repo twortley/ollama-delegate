@@ -112,6 +112,17 @@ TIERS = {"assertion", "scripted", "manual", "inspection"}
 # construction, so any test needing a live model cannot have run there.
 NO_HOST_ENVS = {"ENV-4"}
 
+# The defect triage register's decision vocabulary, and no other. A second
+# decision language is how two findings end up describing the same thing and
+# neither gets acted on -- the same argument that keeps the risk scale single.
+DECISIONS = {"fix before release", "release with disclosure",
+             "defer with justification"}
+# A decision is what was decided; `status` is whether it has been carried out.
+# The pair is what makes the register enforceable rather than readable: an OPEN
+# defect whose decision was `fix before release` is the one combination a list
+# of defects cannot catch by being read.
+DEFECT_STATUS = {"open", "resolved"}
+
 MARK = {"pass": "PASS", "fail": "FAIL 🔴", "not_run": "NOT RUN",
         "disclosed": "DISCLOSED"}
 
@@ -133,6 +144,30 @@ def selftest_labels() -> set[str] | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return set(re.findall(r"^\s*(?:PASS|FAIL)\s+(.+?)\s*$", r.stdout, re.M))
+
+
+def defect_index(data: dict) -> tuple[list[dict], dict[str, str]]:
+    """(the defect register, {internal issue id: public defect id})."""
+    defects = data.get("defects") or []
+    public = {d["tracked_as"]: d["id"] for d in defects
+              if d.get("tracked_as") and d.get("id")}
+    return defects, public
+
+
+def publish_ids(text: str, public: dict[str, str]) -> str:
+    """
+    Internal issue identifiers become the public defect id this report defines.
+
+    The register is what makes the substitution legitimate: the internal id
+    resolves in no published document, and the public one resolves a few
+    paragraphs up. An identifier with NO register entry is left exactly as it
+    is, so the disclosure scan refuses on it -- substituting a placeholder would
+    conceal the gap the scan exists to find.
+    """
+    if not text or not public:
+        return text
+    pattern = r"\b(?:%s)\b" % "|".join(re.escape(k) for k in sorted(public))
+    return re.sub(pattern, lambda m: public[m.group(0)], text)
 
 
 def requirement_states(urs_fs: pathlib.Path | None) -> dict[str, str]:
@@ -164,6 +199,7 @@ def check(data: dict, labels: set[str] | None, states: dict[str, str],
     findings: list[str] = []
     seen_ids: set[str] = set()
     tests = data["tests"]
+    defects, public = defect_index(data)
 
     for t in tests:
         tid = t.get("id", "<no id>")
@@ -205,6 +241,16 @@ def check(data: dict, labels: set[str] | None, states: dict[str, str],
         if t.get("result") == "fail" and not (t.get("issue") or "").strip():
             findings.append(f"{tid}: FAILING with no issue raised -- a failed test "
                             f"must raise an issue that is then fixed or deferred")
+
+        # An issue a test cites must be DEFINED in the defect register. This is
+        # UR-27's bar enforced rather than asserted: an issue identifier that
+        # the report does not define is one a reader cannot resolve, and the
+        # disclosure scan refuses the document on it.
+        issue = (t.get("issue") or "").strip()
+        if issue and defects and issue not in public:
+            findings.append(f"{tid}: cites the issue {issue}, which the defect "
+                            f"register does not define -- a reader cannot "
+                            f"resolve it, and the disclosure scan refuses it")
 
         # The ENV-4 rule, enforced rather than remembered.
         envs = set(t.get("env") or [])
@@ -250,7 +296,35 @@ def check(data: dict, labels: set[str] | None, states: dict[str, str],
                 findings.append(f"{ident}: register says ❌ but every test passes "
                                 f"-- the register is behind the evidence")
 
+    seen_defects: set[str] = set()
+    for d in defects:
+        did = d.get("id", "<no id>")
+        if did in seen_defects:
+            findings.append(f"{did}: duplicate defect id")
+        seen_defects.add(did)
+        # A defect with no release note is a defect nobody decided how to
+        # describe, which is how a known gap ships quietly.
+        for field in ("title", "severity", "rationale", "release_note"):
+            if not (d.get(field) or "").strip():
+                findings.append(f"{did}: no {field}")
+        if d.get("release_decision") not in DECISIONS:
+            findings.append(f"{did}: release_decision "
+                            f"{d.get('release_decision')!r} is outside "
+                            f"{sorted(DECISIONS)}")
+        if d.get("status") not in DEFECT_STATUS:
+            findings.append(f"{did}: status {d.get('status')!r} is outside "
+                            f"{sorted(DEFECT_STATUS)}")
+
     if release:
+        # A decision taken and not carried out. Reading the register cannot
+        # catch this; comparing the decision against the status can.
+        for d in defects:
+            if (d.get("release_decision") == "fix before release"
+                    and d.get("status") != "resolved"):
+                findings.append(f"RELEASE: {d.get('id')} was decided `fix before "
+                                f"release` and is still open. Fix it, or change "
+                                f"the decision and say why")
+
         # Rule 3: a published register carries no development marks.
         for ident in sorted(defined):
             mark = states.get(ident, "")
@@ -272,6 +346,21 @@ def check(data: dict, labels: set[str] | None, states: dict[str, str],
 
 def render(data: dict, findings: list[str]) -> str:
     tests = data["tests"]
+    defects, public = defect_index(data)
+
+    def pub(text: str) -> str:
+        return publish_ids(text or "", public)
+
+    def cell(text: str) -> str:
+        """
+        A table cell is one line. A field with a newline in it ends the row, and
+        everything after it renders as loose paragraph text under a broken
+        table -- which is what twelve of these rows were doing, unnoticed,
+        because nobody had read the rendered report as a stranger would. The
+        content is unchanged; only the line structure is.
+        """
+        return (pub(text).replace("|", r"\|")
+                .replace("\r\n", "\n").replace("\n", "<br>"))
     counts = {r: sum(1 for t in tests if t.get("result") == r) for r in sorted(RESULTS)}
 
     out = [
@@ -283,7 +372,9 @@ def render(data: dict, findings: list[str]) -> str:
         "",
         f"**{len(tests)} tests — "
         + " · ".join(f"{n} {r.replace('_', ' ')}" for r, n in counts.items() if n)
-        + ".**",
+        + ".**"
+        + (f" **{len(data['defects'])} known defects, each with a release "
+           f"decision.**" if data.get("defects") else ""),
         "",
         "Every entry carries an expected outcome and a **falsifier**. An entry "
         "without a falsifier is a demonstration that a process was followed, and "
@@ -308,6 +399,44 @@ def render(data: dict, findings: list[str]) -> str:
         out += [f"> - {f}" for f in findings]
         out.append("")
 
+    if defects:
+        out += [
+            f"## Known defects, and what was decided about each  ({len(defects)})",
+            "",
+            "**Every defect this project knows about — including the ones already "
+            "fixed — with the decision taken on it.** A gap shipped knowingly is a "
+            "normal release; a gap shipped quietly is a claim that fails when "
+            "someone checks it.",
+            "",
+            "Decisions come from one vocabulary — **fix before release**, "
+            "**release with disclosure**, **defer with justification** — and "
+            "`status` says whether the decision has been carried out. The release "
+            "gate refuses a defect decided *fix before release* that is still "
+            "open.",
+            "",
+            "| | Defect | Severity | Decision | Status |",
+            "|---|---|---|---|---|",
+        ]
+        for d in defects:
+            out.append(f"| **{d.get('id')}** | {cell(d.get('title'))} | "
+                       f"{d.get('severity')} | {d.get('release_decision')} | "
+                       f"{d.get('status')} |")
+        out.append("")
+        for d in defects:
+            out += [
+                f"### {d.get('id')} — {pub(d.get('title'))}",
+                "",
+                f"**{d.get('severity')} · {d.get('release_decision')} · "
+                f"{d.get('status')}**",
+                "",
+                "| | |", "|---|---|",
+                f"| Affects | {', '.join(f'`{i}`' for i in d.get('affects') or []) or '—'} |",
+                f"| Evidence | {', '.join(f'`{i}`' for i in d.get('evidence') or []) or '—'} |",
+                f"| Rationale | {cell(d.get('rationale'))} |",
+                f"| Release note | {cell(d.get('release_note'))} |",
+                "",
+            ]
+
     for tier, heading, blurb in [
         ("assertion", "Automated — runs with no host",
          "Executed by `--selftest` and `mutation_check.py`. Each names the exact "
@@ -328,7 +457,7 @@ def render(data: dict, findings: list[str]) -> str:
         out += [f"## {heading}  ({len(group)})", "", blurb, ""]
         for t in group:
             out += [
-                f"### {t['id']} — {t['title']}",
+                f"### {t['id']} — {pub(t['title'])}",
                 "",
                 f"**Result: {MARK.get(t.get('result'), t.get('result'))}**"
                 + (f" · {t['run_on']['env']}, {t['run_on']['date']}"
@@ -339,16 +468,25 @@ def render(data: dict, findings: list[str]) -> str:
                 f"| Discharges | {', '.join(f'`{i}`' for i in t.get('discharges') or []) or '—'} |",
                 f"| Environment | {', '.join(t.get('env') or []) or 'any'}"
                 f"{' · **needs a live host**' if t.get('live_host') else ''} |",
-                f"| Procedure | {t.get('procedure', '—')} |",
-                f"| Expected | {t.get('expected', '—')} |",
-                f"| **Falsifier** | {t.get('falsifier', '—')} |",
+                f"| Procedure | {cell(t.get('procedure', '—'))} |",
+                f"| Expected | {cell(t.get('expected', '—'))} |",
+                f"| **Falsifier** | {cell(t.get('falsifier', '—'))} |",
             ]
             if t.get("observed"):
-                out.append(f"| Observed | {t['observed']} |")
+                out.append(f"| Observed | {cell(t['observed'])} |")
+            if t.get("issue"):
+                out.append(f"| Issue | {public.get(t['issue'], t['issue'])} |")
             if t.get("release_decision"):
-                out.append(f"| Release decision | {t['release_decision']} |")
+                out.append(f"| Release decision | {cell(t['release_decision'])} |")
+            # `notes` is internal provenance -- run records in other projects,
+            # host paths, who found what and when. It is worth keeping and is
+            # not worth publishing, so it ships to the vault copy inside the
+            # markers the publisher strips. Inline, because a table row broken
+            # across lines is no longer a table row.
             if t.get("notes"):
-                out.append(f"| Note | {t['notes']} |")
+                out.append("<!-- VAULT ONLY -->"
+                           f"| Note | {cell(t['notes'])} |"
+                           "<!-- END VAULT ONLY -->")
             out.append("")
     return "\n".join(out) + "\n"
 
