@@ -126,6 +126,17 @@ MUTANTS: list[tuple[str, str, str, str]] = [
      "drop the response byte cap"),
     ("index_tools.py", 'if best["rank"] <= DEFAULT_K:', "if False:",
      "diagnose a rank-1 passage as a ranking failure"),
+    # --- incremental reuse (FS-20) ----------------------------------------
+    # Reuse keyed on the path alone carries a stale vector forward and writes a
+    # header that looks identical. Only a test that CHANGES a file can see it.
+    ("vault_index.py", 'if prior and prior.get("digest") == digest:',
+     "if prior:", "reuse a file's stored vectors after its content changed"),
+    ("vault_index.py", "if out_path.exists() and not args.rebuild:",
+     "if out_path.exists():", "let --rebuild reuse the prior index anyway"),
+    # --- rerank batch size is a correctness parameter (FS-27) -------------
+    ("vault_index.py", "           batch_size: int = 5, rubric",
+     "           batch_size: int = 20, rubric",
+     "restore the batch size that scored twenty passages as noise"),
     # --- rerank reporting -------------------------------------------------
     ("index_tools.py", "RERANK_POOL = 20", "RERANK_POOL = 40",
      "restore a pool that exceeds the client timeout"),

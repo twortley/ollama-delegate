@@ -2116,8 +2116,70 @@ def selftest() -> int:
                       exc.code == 1)
             check("status names the file that appeared",
                   "another.md" in buf.getvalue())
+
+            # FS-20. Reuse is the difference between a 3-second refresh and a
+            # 20-minute one, and it is keyed on the per-file DIGEST. Nothing
+            # exercised it: reuse keyed on the path alone would carry a stale
+            # vector forward, and the header would look identical either way.
+            # `another.md` exists by now -- the drift check above wrote it.
+            def _second(rebuild: bool) -> str:
+                _Args.rebuild = rebuild
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    vi.build(_Args())
+                return out.getvalue()
+
+            incremental = _second(False)
+            check("an unchanged file is reused rather than re-embedded",
+                  "1 reused" in incremental
+                  and "note.md ->" not in incremental)
+
+            (corpus / "note.md").write_text(
+                "# Title\n\nsome prose about fans, and now about pumps\n",
+                encoding="utf-8")
+            changed = _second(False)
+            # The path did not change; only the content did. A reuse test that
+            # only ever adds files passes with the digest comparison deleted.
+            check("a changed file is re-embedded, though its path is the same",
+                  "note.md ->" in changed and "1 reused" in changed)
+
+            forced = _second(True)
+            check("--rebuild ignores the prior index entirely",
+                  "0 reused" in forced)
         finally:
             vi._post = _saved_post
+            _Args.rebuild = True
+
+    print("Retrieval: reranking is batched small enough to stay correct")
+    # FS-27. Twenty candidates in one ~8,300-token call produced well-formed
+    # scores that did not correspond to the passages -- the format was perfect
+    # and the judgement was noise. Five per call fixed it, which makes the
+    # batch size a CORRECTNESS parameter and not a throughput knob. Nothing
+    # said so until here: raising the default back to 20 broke nothing.
+    _saved_post = vi._post
+    try:
+        seen: list[int] = []
+
+        def _batch_probe(host, path, payload, timeout=120):
+            prompt = payload["messages"][0]["content"]
+            n = int(re.search(r"Below are (\d+) numbered passages",
+                              prompt).group(1))
+            seen.append(n)
+            return {"message": {"content":
+                                "\n".join(f"{i}={i % 3}" for i in range(n))},
+                    "eval_count": n, "eval_duration": 1_000_000}
+
+        vi._post = _batch_probe
+        pool = [(0.9 - i / 100, f"f{i}.md", f"passage {i}") for i in range(12)]
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            kept = vi.rerank("http://stub", "m", "q", pool, len(pool))
+        check("no batch carries more than five passages",
+              bool(seen) and max(seen) <= 5)
+        check("every candidate is scored, not just the first batch",
+              sum(seen) == len(pool) and len(kept) == len(pool))
+    finally:
+        vi._post = _saved_post
 
     print("Retrieval: the four tools")
     with tempfile.TemporaryDirectory() as tmp:
