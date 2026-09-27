@@ -4,10 +4,10 @@ title: ollama-delegate URS_FS — User Requirements and Functional Specification
 purpose: The identified user requirements, the functions that satisfy them, and
   the traceability between them. The identifiers all downstream documents cite.
 doc_type: specification
-status: wip
-doc_revision: "1"
+status: canon
+doc_revision: "2"
 created: 2026-08-28
-last_updated: 2026-09-11T00:00:00-04:00
+last_updated: 2026-09-26
 source_author: Tim Wortley + Claude
 tags:
   - specification
@@ -102,14 +102,16 @@ directions.
 **Acceptance criteria are constrained to what this project can execute.** A
 criterion that names no environment capable of running it is not a criterion.
 
-| ID        | Specification                                                                                                                                                                                                                            | Covers                                                                                                                                               |
-| --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ENV-1** (`A001`) | Windows 11 Pro 25H2 · Ollama 0.33.2 · **Python 3.14.4** · Claude Desktop                                                                                                                                                                 | The main development machine and test bed. Most verification was executed here                                                                       |
-| **ENV-2** (`A005`) | Ubuntu 24.04.4 · Ollama 0.30.6 · **Python 3.12.3** · Claude Desktop                                                                                                                                                                      | Verification against a clean Ubuntu target                                                                                                           |
-| **ENV-3** (`A001`) | **A second MCP client — a non-Claude agentic IDE**, on the same Windows host and Ollama instance as `ENV-1`                                                                                                                              | Tool enumeration and response handling outside Claude Desktop                                                                                        |
-| **ENV-4** (no asset) | Unit-test environment · Linux container · **Python 3.10.12** · **no Ollama reachable** · no MCP client                                                                                                                                   | **The declared floor interpreter.** Unit and static verification: `--selftest`, `mutation_check.py`, source inspection                               |
-| **ENV-5** (`A011`) | **A Windows laptop that is not the development host** · **Python 3.14** and Ollama both already present · **not a designated inference host** — an embedding model and two small local chat models are installed and run, slowly; the cloud-tagged models on it are the usable ones · no prior copy of this project | The install path followed by a reader who already meets the prerequisites: obtain the code, venv, dependency, `--selftest`, `--probe`, client wiring |
-| **ENV-6** (no asset) | **The session sandbox with an MCP bridge to a host's Ollama** · Linux container · the *caller* runs here, the *model* runs on the bridged host · `localhost:11434` is NOT reachable from the container; the bridge is                    | Agent-executed testing of the caller-facing artefacts — the skill, routing, and anything measuring what a caller does                                |
+| ID                   | Specification                                                                                                                                                                                                                                                                                                       | Covers                                                                                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **ENV-1** (`A001`)   | Windows 11 Pro 25H2 · Ollama 0.33.2 · **Python 3.14.4** · Claude Desktop                                                                                                                                                                                                                                            | The main development machine and test bed. Most verification was executed here                                                                                                                 |
+| **ENV-2** (`A005`)   | Ubuntu 24.04.4 · Ollama 0.30.6 · **Python 3.12.3** · Claude Desktop                                                                                                                                                                                                                                                 | Verification against a clean Ubuntu target                                                                                                                                                     |
+| **ENV-3** (`A001`)   | **A second MCP client — a non-Claude agentic IDE**, on the same Windows host and Ollama instance as `ENV-1`                                                                                                                                                                                                         | Tool enumeration and response handling outside Claude Desktop                                                                                                                                  |
+| **ENV-4** (no asset) | Unit-test environment · Linux container · **Python 3.10.12** · **no Ollama reachable** · no MCP client                                                                                                                                                                                                              | **The declared floor interpreter.** Unit and static verification: `--selftest`, `mutation_check.py`, source inspection                                                                         |
+| **ENV-5** (`A011`)   | **A Windows laptop that is not the development host** · **Python 3.14** and Ollama both already present · **not a designated inference host** — an embedding model and two small local chat models are installed and run, slowly; the cloud-tagged models on it are the usable ones · no prior copy of this project | The install path followed by a reader who already meets the prerequisites: obtain the code, venv, dependency, `--selftest`, `--probe`, client wiring                                           |
+| **ENV-6** (no asset) | **The session sandbox with an MCP bridge to a host's Ollama** · Linux container · the *caller* runs here, the *model* runs on the bridged host · `localhost:11434` is NOT reachable from the container; the bridge is                                                                                               | Agent-executed testing of the caller-facing artefacts — the skill, routing, and anything measuring what a caller does                                                                          |
+| **ENV-7** (`A013`)   | **A Windows 11 host that is not the development machine, with no prior copy of this project** · **Python 3.13.15** · Ollama with a local 12B chat model, a local embedding model and one cloud model · Claude Desktop and Google Antigravity                                                                        | The end-to-end pass on the published repository, 2026-09-24/25: clone, install from the README, `--selftest`, `--probe`, both clients, inference, refusal, skill triggering, the retrieval CLI |
+| **ENV-8** (no asset) | **CI** — GitHub-hosted Ubuntu and Windows runners · **Python 3.13** · MCP SDK 1.x and 2.x · **no Ollama reachable** · the SDK's own stdio client                                                                                                                                                                    | Every push: `--selftest`, a stdio handshake on both SDK generations, the encoding check, the skill ZIP layout. **Unit and handshake only — no model**                                          |
 
 > **`ENV-3` assigned 2026-08-31**, having been *"to be determined"* since this
 > document was written. Same `mcpServers` entry shape as `ENV-1`; connected first
@@ -516,12 +518,17 @@ function is unparented and no requirement is unsatisfied.
 
 ## 8. Related
 
-**Published and linkable:** `README.md` · [Design Specification](DESIGN.md) ·
-[Verification Report](VERIFICATION.md) · `SECURITY.md` · `LICENSE`
+**Published and linkable:** `README.md` · [Operator Manual](MANUAL.md) ·
+[Design Specification](DESIGN.md) · [Verification Report](VERIFICATION.md) ·
+`SECURITY.md` · `CHANGELOG.md` · `LICENSE`
 
 **Specified but not yet published** — named rather than linked, because a link to
-a document that does not exist is worse than no link: `docs/MANUAL.md` (DOC-02) ·
-`THREAT_MODEL.md` (DOC-05)
+a document that does not exist is worse than no link: `THREAT_MODEL.md` (DOC-05)
+
+> **Corrected 2026-09-26, for 1.0.0.** `docs/MANUAL.md` (DOC-02) moved from this
+> list to the one above when it was published, and `CHANGELOG.md` was added. Found
+> by re-reading this section before the commit — the same class as the
+> 2026-09-12 correction below, a second time. Nothing checks this list yet.
 
 > **Corrected 2026-09-12.** This list carried `docs/VERIFICATION.md` as *not yet
 > published* on the day it was published. **A list of what exists is a claim

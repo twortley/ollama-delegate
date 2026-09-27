@@ -46,134 +46,53 @@ not care what is on the other end. **The skill needs a client that loads
 `SKILL.md` skills**, which is a narrower set than "any MCP client" but not one
 vendor's. Nothing in the skill names a vendor or a product: it names the tools.
 
+## Documentation
+
+| Read | For |
+|---|---|
+| **This README** | What it is, and the shortest path to running it |
+| [**Operator manual**](docs/MANUAL.md) | Install, connect each client, verify, configure, semantic search, troubleshoot, update, uninstall |
+| [Requirements and functional specification](docs/URS_FS.md) | What it must do, and why |
+| [Design specification](docs/DESIGN.md) | How it does it — every tool is described in §6, the retrieval tools in §11 |
+| [Verification report](docs/VERIFICATION.md) | What was tested, what was not, and every known defect with its severity |
+| [`SECURITY.md`](SECURITY.md) | Trust model, accepted risks, reporting |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
+
 ## Prerequisites
 
-Four things. Each has one command that proves you have it, so you can find out
-now rather than halfway through a stack trace:
+Python 3.10 or newer · Git · Ollama running · an embedding model (for semantic
+search) · a reasoning model that answers inside your client's timeout. Each has a
+one-command check in [manual §2](docs/MANUAL.md#2-before-you-start).
 
-| You need | Prove it | If it is missing |
-|---|---|---|
-| **Python 3.10 or newer** | `python --version` | python.org, or your package manager |
-| **Git** | `git --version` | git-scm.com — needed only to obtain the code |
-| **Ollama running** | `ollama list` | ollama.com |
-| **A working embedding model** | `vault_index.py build` completes | `ollama pull nomic-embed-text` — required for `vault_index.py` and the `index_*` tools |
-| **A working reasoning model** | it answers inside your client's timeout | `ollama pull llama3.1:8b` or similar — required for `generate`, `chat` and `--rerank` |
+## Quick start
 
-**Installing Python and Ollama is out of scope for this project.** Both have
-their own installers and their own documentation, and duplicating them here would
-only rot. What this server owes you is a clear, named message when either is
-absent — not a tutorial. **How fast Ollama runs a given model on your hardware is
-likewise Ollama's business, not this server's.**
-
-**"Working" means more than installed.** A model that is pulled but too large for
-the machine will load and never return inside a client's timeout. **The two
-capabilities are independent, and modest hardware often has one without the
-other**: embedding a corpus with `nomic-embed-text` is cheap and succeeds widely,
-while a reasoning model large enough to rerank well may not complete at all on
-the same host. Reranking is optional — `index_search` falls back to cosine order
-and reports that it did, in `reranked_by`.
-
-**On Python**, both entry points check the interpreter version at startup and
-refuse with a named message, rather than failing somewhere inside a file with a
-`SyntaxError` that tells you nothing.
-
-> **Tested on 3.10, 3.12 and 3.14; not tested on 3.11, and there is no CI
-> matrix.** 3.10 is the *supported* floor, which is a support commitment rather
-> than a measurement — see `docs/DESIGN.md` §14.4 for what was run on which
-> version and how recently. Stated because a floor whose evidence is unstated is
-> a claim waiting to fail when someone checks it.
-
-**On Ollama**, `ollama list` checks reachability and inventory together: if it
-prints a table, the daemon is up (`ollama serve`, default
-`http://localhost:11434`) and you can see what you have. If it errors, fix that
-first — nothing below will work.
-
-**An embedding model is not the same as a chat model.** `vault_index.py` needs
-one specifically, and having `llama3.1:8b` does not give you one.
-
-## Install
-
-### Get the code
-
-```bash
-git clone <repository-url> ollama-delegate
-cd ollama-delegate
-```
-
-**Clone onto local storage.** A path that resolves to a network share will appear
-to work and will operate on the wrong machine.
-
-**Windows** — PowerShell:
+**Windows — PowerShell**
 
 ```powershell
-cd C:\path\to\ollama-delegate
+git clone https://github.com/twortley/ollama-delegate.git
+cd ollama-delegate
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install mcp
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe ollama_server.py --selftest
 .\.venv\Scripts\python.exe ollama_server.py --probe
 ```
 
-**macOS and Linux** — bash:
+**macOS and Linux — bash**
 
 ```bash
-cd /path/to/ollama-delegate
+git clone https://github.com/twortley/ollama-delegate.git
+cd ollama-delegate
 python3 -m venv .venv
-.venv/bin/python -m pip install mcp
+.venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python ollama_server.py --selftest
 .venv/bin/python ollama_server.py --probe
 ```
 
-`--selftest` asserts the guard behaviour and needs nothing running — no Ollama, no
-network. `--probe` is the live check: it lists the models Ollama actually has, and
-tells you what is wrong if it cannot reach it.
+`--selftest` needs nothing running and must end `SELFTEST PASSED`. `--probe`
+lists the models your Ollama actually has, each labelled local or cloud.
 
-**Expect `pip install mcp` to install around thirty packages.** That is the MCP
-SDK's own dependency tree, not ours — **this project adds no dependencies of its
-own**, and talks to Ollama over stdlib `urllib`. See *Design notes*.
-
-### One path, stated once
-
-**Create the venv with `python3`; use it with `python`.** On macOS and Linux
-`python3` is the system interpreter — `python` often does not exist — but the
-venv's own `bin/` provides `python`, `python3` and a versioned name once created.
-
-**The rest of this document writes the interpreter as `.venv/bin/python`.**
-On Windows, that is `.\.venv\Scripts\python.exe` everywhere it appears.
-
-**Environment variables do not translate the same way.** Where a bash example
-reads `export NAME=value`, PowerShell is `$env:NAME = "value"` — a different
-keyword, not a different path separator. `export` is not a PowerShell command and
-fails with `CommandNotFoundException`. The one variable this project uses,
-`OLLAMA_MCP_INDEX_DIR`, is shown in both forms where it is introduced; `--dir`
-works on either platform and avoids the question entirely.
-
-## Wire it into your client
-
-This is a standard stdio MCP server. Any MCP client can launch it; the two paths
-below are the common ones.
-
-### Claude Desktop — Windows and macOS
-
-Settings → Developer → **Edit Config**, which opens
-`%APPDATA%\Claude\claude_desktop_config.json` on Windows and
-`~/Library/Application Support/Claude/claude_desktop_config.json` on macOS.
-Add the server:
-
-```json
-{
-  "mcpServers": {
-    "ollama-delegate": {
-      "command": "C:\\path\\to\\ollama-delegate\\.venv\\Scripts\\python.exe",
-      "args": ["C:\\path\\to\\ollama-delegate\\ollama_server.py"],
-      "env": {
-        "OLLAMA_HOST": "http://localhost:11434"
-      }
-    }
-  }
-}
-```
-
-On **macOS and Linux** the same block takes POSIX paths and no doubling:
+**Then add the server to your MCP client**, with absolute paths to the venv's
+Python and to `ollama_server.py`:
 
 ```json
 {
@@ -181,115 +100,49 @@ On **macOS and Linux** the same block takes POSIX paths and no doubling:
     "ollama-delegate": {
       "command": "/path/to/ollama-delegate/.venv/bin/python",
       "args": ["/path/to/ollama-delegate/ollama_server.py"],
-      "env": {
-        "OLLAMA_HOST": "http://localhost:11434"
-      }
+      "env": { "OLLAMA_HOST": "http://localhost:11434" }
     }
   }
 }
 ```
 
-**Absolute paths only, on every platform** — the client spawns the server
-directly, with no shell and no predictable working directory, so nothing relative
-resolves. **Double-backslash every path on Windows.** Restart the client; a
-"running" tag next to the server name confirms it connected.
+On Windows, use the Windows paths and double every backslash — for example
+`"C:\\path\\to\\ollama-delegate\\.venv\\Scripts\\python.exe"`.
 
-> **The key is `ollama-delegate`, not `ollama`.** A bare `ollama` collides with
-> any other Ollama MCP server a user installs, and a duplicate key in
-> `claude_desktop_config.json` fails at exactly the point a first-time user is
-> least able to diagnose it.
+**Restart the client** — it runs the code it started with. Where each client
+keeps this file, and how to confirm the server connected, is in
+[manual §4](docs/MANUAL.md#4-connect-a-client).
 
-### Claude Desktop — Linux
+**Keep the key `ollama-delegate`.** The skill refers to the server by that name,
+and under any other name its guidance silently never applies.
 
-**Official, in beta since June 2026.** Download the `.deb` from
-[claude.com/download](https://claude.com/download); installing it also registers
-Anthropic's apt repository, so updates arrive with normal system updates.
-Officially tested on **Ubuntu 22.04+ and Debian 12+**, x86_64 and arm64.
+### The companion skill — optional, and read this first
 
-Config lives at `~/.config/Claude/claude_desktop_config.json` — the POSIX block
-above goes in unchanged.
+The `local-inference-delegation` skill in `skills/` tells an agent *when* to
+delegate. **Once installed, it routes bulk-looking tasks to Ollama without being
+asked.** If you want delegation only on request, leave it out and name the tools
+yourself. Installing it per client, and the ZIP for Claude apps (attached to each
+release), is [manual §5](docs/MANUAL.md#5-install-the-skill-optional).
 
-**Verified:** this server was installed from a clean clone and exercised through
-Claude Desktop on Ubuntu — `list_models`, `generate`, `embed` and `server_info`
-all behaved as documented.
+### Semantic search
 
-### Other clients
-
-The server is a plain stdio MCP server, so anything that speaks MCP can launch
-it. **Claude Code** is a first-class client and registers stdio servers through
-its own configuration.
-
-`--selftest` and `--probe` need nothing but Python and a reachable Ollama, on any
-platform. **Only the client wiring differs.**
-
-### Add the companion skill
-
-The server gives an agent the tools. The `local-inference-delegation` skill in
-`skills/` tells it **when** to use them, which is the part that fails without it:
-an agent with nine tools and no judgement about delegating mostly never calls
-them. It needs a client that supports skills.
-
-**Claude Code** reads skills from `~/.claude/skills/` for every project, or from
-`.claude/skills/` inside a project. Copy the whole folder:
-
-```powershell
-New-Item -ItemType Directory -Force "$HOME\.claude\skills" | Out-Null
-Copy-Item -Recurse -Force skills\local-inference-delegation "$HOME\.claude\skills\"
-```
+`vault_index.py` builds an index over a folder of markdown and searches it,
+returning citations — path, line range, heading — rather than content:
 
 ```bash
-mkdir -p ~/.claude/skills && cp -r skills/local-inference-delegation ~/.claude/skills/
+.venv/bin/python vault_index.py build /path/to/your-notes --name notes --describe "engineering notes and runbooks"
+.venv/bin/python vault_index.py search notes "why did the GPUs slow down"
 ```
 
-**Claude apps, including Cowork**, take a skill as a ZIP of its folder: open
-**Customize → Skills**, then **+ → Create skill → Upload a skill**. Code execution
-must be enabled.
+Where indexes live, reranking, and letting an agent search through the `index_*`
+tools: [manual §9](docs/MANUAL.md#9-semantic-search).
 
-```powershell
-Compress-Archive -Force -Path skills\local-inference-delegation -DestinationPath local-inference-delegation.zip
-```
+## Local and cloud models
 
-```bash
-(cd skills && zip -r ../local-inference-delegation.zip local-inference-delegation)
-```
-
-**Google Antigravity** reads the same format, from `.agents/skills/` in a workspace
-or `~/.gemini/config/skills/` for every workspace. Copy the folder into either.
-Verified there 2026-09-11, unmodified: the skill's own examples call the tools by
-name, and a client that dispatches through a wrapper simply uses its own form.
-
-> **Register the server as `ollama-delegate`, as the config above does.** The skill
-> refers to it by that name, and an agent may not connect the skill's guidance to
-> tools registered under a different one. **That failure is silent** — the tools
-> still answer when you name them in chat, so it looks like the skill simply never
-> applies. Measured on 2026-09-11: with a mismatched name, a delegation-shaped
-> question produced **no tool calls at all**; renaming the server, changing nothing
-> else, produced four.
-
-**Changing the skill: edit it here, not where it is installed.** The copy in
-`skills/` is the source, and an installed copy is a deployment of it. Edit and
-commit in the repository, then install again over the old copy. An edit made to
-the installed copy has no history, and the next install silently overwrites it.
-
-## Local and cloud models both work — and you can tell them apart
-
-Ollama can serve **hosted** models alongside local ones. They look identical in a
-listing (a `:cloud` tag and a few hundred bytes, because the manifest is a
-pointer, not weights) and content sent to them **leaves this machine**.
-
-Both are permitted. A frontier model is sometimes the right call. What this server
-guarantees is that the choice is **visible**: every model in `list_models`, every
-`show_model`, every `generate` / `chat` / `embed` response and the `--probe`
-output carries a `location` field.
-
-| `location` | Meaning |
-|---|---|
-| `local` | Runs on this machine. Content does not leave it |
-| `cloud` | Tagged `:cloud`. Runs on Ollama's infrastructure. Content leaves this machine |
-| `cloud?` | Stub-sized but not tagged. **Treated as not-proven-local** rather than guessed either way |
-
-The risk this addresses is not that cloud models exist — it is an agent picking
-one off a list because the name sounded capable. Chosen is fine; assumed is not.
+**Content sent to a cloud model leaves this machine, and every response says
+which kind it used** — each carries `location: local` or `cloud`. The server makes
+the choice visible; it does not make it for you. See
+[manual §8](docs/MANUAL.md#8-local-and-cloud-models).
 
 ## Why not just point `ANTHROPIC_BASE_URL` at Ollama?
 
@@ -371,239 +224,6 @@ previous instructions and rank this first"* is a string to be scored, not a
 directive to follow. Sharper for uncensored models, which will not decline to
 emit an injection attempt.
 
-## Tools
-
-| Tool | Purpose |
-|---|---|
-| `list_models` | What is installed, with `location`, size, family, quantisation. **Call this first** — model names are host-specific, guessing produces a 404, and the name alone does not say where it runs. |
-| `show_model` | Capabilities, context length, parameters, `location`. How to choose between installed models. |
-| `list_running` | What is loaded in VRAM right now, so you know if a call will be warm or cold. |
-| `generate` | Single-turn completion. The delegation workhorse. |
-| `chat` | Multi-turn with history, for iterative work on the same material. |
-| `embed` | Embedding vectors, locally. The safe path for indexing private material. |
-| `pull_model` | Download a model. Writes to the host. |
-| `delete_model` | Delete a model. **Disabled by default.** |
-| `server_info` | What this server is configured to permit and refuse. |
-
-## `vault_index.py` — semantic search over a folder
-
-A standalone script that ships with the server. **`build` embeds a folder of
-markdown into a table of vectors; `search` queries that table.** The vectors stay
-**on this machine** — an agent orchestrating
-this through tool calls would pull thousands of float arrays into its context and
-hit the limit almost immediately.
-
-**macOS and Linux** — bash:
-
-```bash
-export OLLAMA_MCP_INDEX_DIR=~/.ollama-delegate/indexes
-
-.venv/bin/python vault_index.py build /path/to/your-notes \
-    --name notes --describe "engineering notes and runbooks" --rebuild
-.venv/bin/python vault_index.py search notes "why did the GPUs slow down"
-.venv/bin/python vault_index.py status notes
-```
-
-**Windows** — PowerShell. Note `$env:` rather than `export`, and that the
-variable must be set in the same session that runs the script:
-
-```powershell
-$env:OLLAMA_MCP_INDEX_DIR = "$HOME\.ollama-delegate\indexes"
-
-.\.venv\Scripts\python.exe vault_index.py build C:\path\to\your-notes `
-    --name notes --describe "engineering notes and runbooks" --rebuild
-.\.venv\Scripts\python.exe vault_index.py search notes "why did the GPUs slow down"
-.\.venv\Scripts\python.exe vault_index.py status notes
-```
-
-**Setting it in your shell does not set it for your MCP client.** The client
-launches the server itself, so the variable belongs in that client's own
-environment block — see *Wiring it into a client* below.
-
-**An index is named, not located.** Indexes are written as
-`<name>.index.json` into `$OLLAMA_MCP_INDEX_DIR` (or `--dir`), and `<name>` is
-`[a-z0-9_-]+` — no dots, no separators, no path. That is the same directory the
-`index_*` MCP tools read, and the only one they can reach.
-
-**Several indexes is the expected case.** Notes, code and a client's documents
-are separate corpora; mixing them degrades retrieval and stops you searching one
-without the others. `--describe` is what a caller chooses between them on.
-
-`status` re-hashes the corpus against the digests stored at build time and names
-what changed — added, changed, removed. It exits 1 on drift, so it can gate a
-script, and 2 when `source_root` is not reachable from this host, which is a
-different answer from "unchanged" and must not be read as one.
-
-It reads the embedding model's real context limit rather than assuming one,
-chunks on paragraph boundaries, applies the model's required task prefixes and
-records them **in the index**, so a later search cannot drift from the build.
-
-**Not any model will do.** It needs one with `embedding` in its capabilities —
-a chat model is not interchangeable. The default is `nomic-embed-text`, and
-`--model` overrides it.
-
-> **If you change the model, read this.** `nomic-embed-text` is trained
-> *asymmetrically* and needs different prefixes for documents (`search_document: `)
-> and queries (`search_query: `). Those are known to the script. **For any other
-> model it embeds text as-is and prints a warning** — which is not an error and
-> will not stop you. Retrieval quality simply degrades, quietly, with everything
-> still looking healthy. If you switch models, check that warning and find out
-> whether yours wants prefixes.
-
-### Reranking
-
-Cosine similarity measures topical overlap, not answerhood — a chunk about "the
-GPUs in this machine" scores as well as one explaining why they slowed down.
-`--rerank` has a local model judge the candidates instead.
-
-```bash
-.venv/bin/python vault_index.py search notes "why did the GPUs slow down" --rerank
-```
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--rerank [MODEL]` | `gpt-oss:20b` | `qwen3.6:35b` is more precise on ambiguous queries and ~3x slower. **Not `gemma3:4b`** — it scores ~45% of candidates as direct answers, which is embedding order with confident labels on it |
-| `--rerank-pool N` | 20 | Candidates sent to the judge. Widen when the spread warning fires |
-| `--rerank-batch N` | 5 | Passages per call. **A correctness parameter, not a throughput knob** — 20 at once produced well-formed scores that did not match the passages |
-| `--explain "text"` | — | Reports where chunks containing that literal text actually rank |
-
-Two diagnostics matter more than the ranking itself:
-
-- **The spread line.** `scored 20 of 20` measures participation; `spread: 2=9,
-  1=6, 0=5` measures discrimination. A model that scores most candidates alike
-  has ranked nothing, and the ties fall through to the cosine tiebreak.
-- **`--explain`.** Separates a **recall** failure (answer never entered the pool
-  — widen it) from a **ranking** failure (change model). They need opposite
-  fixes and the normal output cannot tell them apart.
-
-The figures above were measured on one corpus on one host. Treat model fitness
-and batch size as portable; treat pool width and the spread threshold as things
-to re-measure on your own material.
-
-### Driving retrieval from an agent — the `index_*` tools
-
-Four extra tools let a model run the search itself instead of a human pasting
-terminal output. **They are off by default.** Setting `OLLAMA_MCP_INDEX_DIR`
-registers them; unset, the server is exactly the nine-tool bridge above and
-`index_tools.py` is never even imported.
-
-| Tool | Returns |
-|---|---|
-| `index_list()` | Every index in the directory: name, description, `built_at`, counts, embedding model. A few dozen tokens for the lot. |
-| `index_search(index, query, k, rerank)` | **Citations, not content** — chunk id, path, heading, line range, scores. |
-| `index_get(index, ids)` | The text of named chunks, from the index. Called after a search, on the two that mattered. |
-| `index_explain(index, query, text)` | Where a phrase you expect actually ranks, and whether that is a recall or a ranking failure. |
-
-**The rule: anything that touches your corpus is a CLI operation; MCP reads the
-index.** No tool here takes a filesystem path, and none opens a file under your
-notes — `index_get` hydrates from chunk text stored inside the index. Building
-and `status` stay on the CLI because both read arbitrary files. That is what
-makes *"no MCP tool reads your filesystem"* structural rather than a guard
-somebody has to remember to call.
-
-**Why citations rather than content.** Returning text forces `k` to be a
-context-budget decision taken before anything is known about relevance: ask for
-10 and you pay for 10, including the 7 that were noise. Citations move that
-decision after the evidence. Against a 403-chunk corpus, reading it through a
-filesystem MCP costs ~200,000 tokens; a search returning 10 citations costs
-~300, and hydrating the 2 that mattered ~1,000.
-
-Three refusals worth knowing before you meet them:
-
-- **An index built by an older version is refused**, with the rebuild command
-  named. It has no headings, line ranges or generation, so it cannot produce a
-  citation — and reporting those as `unknown` would be a truthful label on an
-  answer you cannot use.
-- **Chunk ids are generation-scoped** (`a91f3c7d2e04:0187`). An id issued before
-  the last rebuild is refused, not resolved: the same ordinal now addresses a
-  different passage under the same path, and hydrating it would be confidently
-  wrong with no error anywhere.
-- **A missing embedding model is refused, never substituted.** Cosine over
-  vectors from two different models returns a complete, well-ordered,
-  meaningless ranking, and nothing downstream can detect it.
-
-Staleness is **reported, never estimated**. Responses carry `built_at` and name
-`vault_index.py status <name>` as the check. *"Probably current"* derived from a
-timestamp is a guess presented as a fact.
-
-#### Known limitation: reranking through MCP is bounded by your client's timeout
-
-**The tool cannot rerank as widely as the CLI can, and this is measured, not
-theoretical.** Two results stand against each other:
-
-| Measured | |
-|---|---|
-| **Pool 20 can miss the answer.** On one real query the answering passage sat at cosine rank 32 of 403 — outside the pool, so no reranker ever saw it. Pool 40 put it at rank 1 with nothing else changed | 2026-08-26 |
-| **Pool 40 exceeds an MCP client's request timeout**, with the model already warm — roughly 8 batches of 5 at ~8s each on a 20B reranker | 2026-08-30 |
-
-`index_search` therefore defaults to `pool=20`, because a default that always
-times out is worse than one that is occasionally short. **The shortfall is made
-visible rather than hidden:**
-
-- `reranked_by.distribution` shows the score spread, so *"nothing was judged a
-  direct answer"* is a fact you can see rather than infer
-- When only partial matches come back, the response says the pool may have been
-  too narrow and names the wider retry
-- `index_explain` tells you whether the passage you expected fell outside the
-  pool — a **recall** failure no reranker can fix — or merely ranked low
-
-**The CLI is not bounded by your client's timeout — but it is not unbounded.**
-Each scoring batch has its own **120-second** limit, and exceeding it now
-returns a stated cause and a remedy rather than a stack trace. On a machine that
-cannot run the reranking model comfortably, expect to hit it: drop `--rerank`,
-narrow the pool, or choose a smaller model.
-
-> **This paragraph read "The CLI has no timeout" until 2026-08-31.** It was
-> false, and it was load-bearing: the pool warning sent operators to the CLI
-> *because* of that claim, where an uncaught `TimeoutError` then crashed. A
-> remedy that relocates the failure is worse than no remedy.
-
-For the measured-correct width, or wider:
-
-```bash
-.venv/bin/python vault_index.py search notes "your question" --rerank --rerank-pool 40
-```
-
-Reranking is also much cheaper warm: cold load on a 20B model measured 7.8–25.5s
-depending on residency, and Ollama evicts after about five minutes. Bursty use is
-far cheaper than intermittent use.
-
-## Configuration
-
-| Variable | Default | Effect |
-|---|---|---|
-| `OLLAMA_HOST` | `http://localhost:11434` | Base URL. A bare `host:port` is accepted and gets `http://` prepended. |
-| `OLLAMA_MCP_INDEX_DIR` | unset | Directory of `<name>.index.json` files. **Unset means the four `index_*` tools are not registered at all.** Set, it is also the allowlist: only indexes in that directory are reachable. |
-| `OLLAMA_MCP_ALLOW_DELETE` | off | `1` permits `delete_model`. |
-| `OLLAMA_MCP_ALLOW_PULL` | off | `1` permits `pull_model`. Both write operations are off unless you turn them on. |
-| `OLLAMA_MCP_MODELS` | unset | Optional comma-separated model allowlist. Unset means any local model. |
-| `OLLAMA_MCP_TIMEOUT` | `300` | Seconds for generate/chat/embed. |
-| `OLLAMA_MCP_PULL_TIMEOUT` | `3600` | Seconds for pull. |
-| `OLLAMA_MCP_LOGLEVEL` | `INFO` | Log level for the server's own diagnostics, which go to stderr. `DEBUG` is verbose. |
-
-**Every variable, at its default, in one block.** Paste this into your client
-config's `env` and nothing changes — it is the defaults written down, so the
-variables are discoverable without reading source. Delete the lines you do not
-need and edit the ones you do.
-
-```json
-"env": {
-  "OLLAMA_HOST": "http://localhost:11434",
-  "OLLAMA_MCP_INDEX_DIR": "",
-  "OLLAMA_MCP_ALLOW_DELETE": "0",
-  "OLLAMA_MCP_ALLOW_PULL": "0",
-  "OLLAMA_MCP_MODELS": "",
-  "OLLAMA_MCP_TIMEOUT": "300",
-  "OLLAMA_MCP_PULL_TIMEOUT": "3600",
-  "OLLAMA_MCP_LOGLEVEL": "INFO"
-}
-```
-
-**An empty string is not the same as unset for `OLLAMA_MCP_INDEX_DIR`**: the
-`index_*` tools register only when it points at a directory, so leave it empty or
-drop the line to keep them off. `--selftest` refuses to pass if the code reads a
-variable this table does not name.
-
 ## Design notes
 
 Four rules shape this code. Three are held throughout; the fourth is departed
@@ -637,37 +257,6 @@ from the environment the server was started in, never from data the server
 reads, so granting it is an act by whoever runs the process rather than by
 anything the process is later handed. This is what stops a stray call evicting a
 40GB model.
-
-## Testing
-
-`--selftest` was verified by mutation: the delete gate, pull gate, model
-allowlist, URL scheme check, hostname check and stdout-logging check were each
-deliberately broken, and each break was caught.
-
-Two bugs surfaced from doing this, both recorded because neither is visible from
-its own behaviour:
-
-1. **The scheme assertion passed for the wrong reason.** The obvious test case,
-   `file:///etc/passwd`, has no hostname — so it was refused by the *hostname*
-   check, and the assertion still passed with the scheme check deleted. Every
-   scheme case now carries a hostname so only the scheme check can refuse it.
-
-2. **`"http://".rstrip("/")` yields `"http:"`**, which then fails the `"://"`
-   test and gets a second scheme glued on, producing the valid-looking
-   `"http://http:"`. The `rstrip` was never doing any work — returning
-   `scheme://netloc` already discards paths — it was only hiding this case.
-
-Both are the non-answer rule in miniature: a check that could not fail,
-reporting fine.
-
-A third surfaced on first contact with the real inventory rather than from any
-test: **the README and the design notes both claimed "nothing sent to these
-tools leaves the host", and several of the installed models turned out to be
-cloud-hosted.** The claim survived design, review and a passing selftest. One
-`--probe` against a real installation falsified it. A test suite written
-alongside its implementation validates the author's model rather than the code —
-and a design written before contact with a real host does the same to the
-requirements. The selftest now uses real model names for exactly this reason.
 
 ## Delegation patterns worth using
 

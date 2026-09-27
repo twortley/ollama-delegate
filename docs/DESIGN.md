@@ -4,10 +4,10 @@ title: Design Specification — ollama-delegate
 purpose: As-shipped technical documentation — architecture, module and data
   design, configuration surface, interfaces — traced to URS_FS. DOC-03.
 doc_type: design
-status: wip
-doc_revision: 2
+status: canon
+doc_revision: 3
 created: 2026-08-30
-last_updated: 2026-08-30T00:00:00-04:00
+last_updated: 2026-09-26
 source_author: Tim Wortley + Claude
 tags:
   - design
@@ -526,7 +526,7 @@ Report what this MCP server is configured to do and what it refuses.
 server_info() -> dict[str, Any]
 ```
 
-**Returns on success:** `host`, `write_operations`, `write_gates`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `log_level`, `retrieval_tools`, `note`
+**Returns on success:** `version`, `host`, `write_operations`, `write_gates`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `log_level`, `retrieval_tools`, `note`
 
 **Verdicts reachable:** `ok`
 
@@ -1275,11 +1275,14 @@ and says so.
 | **3.10.12** | `ENV-4` | `--selftest` and `mutation_check.py` throughout the retrieval work, **current code**, 2026-08-30 | **Unit and static.** `ENV-4` reaches no Ollama endpoint, so no live model and no MCP client |
 | **3.11** | — | None | **Untested, by decision** |
 | **3.12.3** | `ENV-2` | Install → `--selftest` → `--probe` → full tool exercise through a desktop MCP client, 2026-08-29 | End to end, **on code that predates the retrieval tools** |
+| **3.13** | `ENV-8` | CI on every push from 1.0.0: `--selftest` on Ubuntu and Windows, and a stdio handshake with the SDK's own client on MCP SDK 1.x and 2.x | **Unit and handshake.** No Ollama reachable, so no model |
+| **3.13.15** | `ENV-7` | Clone of the published repository → install from the README → `--selftest` → `--probe` → Claude Desktop and Google Antigravity through inference, refusal, skill triggering and the retrieval CLI, 2026-09-24/25, build `4066f75` | **End to end, on current code**, on a host with no prior copy |
 | **3.14.4** | `ENV-1` | `--selftest`, current code, 2026-08-30 | Selftest only |
 
 **Three things this table says that a single "tested floor" figure would hide.**
-The most thorough run — 3.12.3, end to end against a live host — is also the
-**stalest**, made before `index_tools.py` existed. The interpreter the system is
+The most thorough run is now 3.13.15 (`ENV-7`), end to end on current code on a
+host that had never seen the project; the earlier 3.12.3 run predates
+`index_tools.py`. The interpreter the system is
 developed on daily is 3.14.4, nowhere near the floor. And the floor's own
 evidence comes from an environment that **cannot reach a model at all**, so it
 establishes that the code runs, not that it works.
@@ -1288,8 +1291,8 @@ establishes that the code runs, not that it works.
 is why all four are in the table and why no row is summarised into a single
 claim.
 
-**Policy, owner-set:** 3.10 and 3.11 will not be deliberately tested. There is
-no CI matrix. **`UR-31` is therefore met in the form it actually asks for** — a
+**Policy, owner-set:** 3.10 and 3.11 will not be deliberately tested. CI runs one
+interpreter, 3.13; there is no version matrix. **`UR-31` is therefore met in the form it actually asks for** — a
 floor is stated, and the span for which no evidence exists is named rather than
 implied. `PER-1` gets a sentence instead of a `SyntaxError`.
 
