@@ -51,6 +51,22 @@ Those three fields drive every decision below.
 
 ## Choosing a model
 
+### When the operator names a model, that choice wins
+
+**If the operator names a model, use that model.** Do not substitute one you
+think is better, do not run the ladder below, and do not quietly switch when the
+named model is slow. If it cannot finish — a timeout, a context limit — stop and
+say so, and let the operator choose the next step. **Never move a named task to
+a cloud model on your own.**
+
+If the named model is plainly unfit for the job — a `thinking` model asked for a
+single label, an embedding model asked to write prose — say so once, then use it
+if the operator confirms. Report `location` as always.
+
+The ladder is for when no model was named.
+
+### The routing table
+
 **`list_models` is the routing table.** It is live, it is authoritative, and it
 is one call away at any moment — so there is nothing to look up, nothing to keep
 in sync, and no file whose absence degrades anything. The ladder below needs only
@@ -203,9 +219,15 @@ duplicate goes stale silently and the copy is what you will end up debugging
 against.
 
 ```
-python vault_index.py build <folder> --out index.json --rebuild
-python vault_index.py search index.json "a question in plain language"
+python vault_index.py build <folder> --name notes --describe "what this corpus is for" --rebuild
+python vault_index.py search notes "a question in plain language"
 ```
+
+**An index is addressed by name, never by path** — `notes` above. `build`
+writes `<name>.index.json` into the index directory — `OLLAMA_MCP_INDEX_DIR`, or `--dir`
+on each command — which is the same directory the `index_*` tools read. Names are
+lowercase letters, digits, `_` and `-`. `--describe` is what a caller chooses
+between indexes on, so write it for them.
 
 Run it with the interpreter from the project's own virtual environment, and note
 that it embeds through Ollama, so **whatever runs it needs a network route to the
@@ -231,7 +253,7 @@ about "GPUs in this machine" scores as well as one explaining why they slowed
 down. Chunking cannot fix that; it is the wrong signal for the final ordering.
 
 ```
-python vault_index.py search index.json "why did the GPUs slow down" --rerank
+python vault_index.py search notes "why did the GPUs slow down" --rerank
 ```
 
 Bare `--rerank` uses `gpt-oss:20b` (~28s, correct on most queries). Add
@@ -250,7 +272,7 @@ the embeddings are barely ranking, so the pool boundary is close to arbitrary,
 and that is exactly when the right candidate is most likely to fall outside it.
 
 ```
-python vault_index.py search index.json "..." --explain "an exact phrase"
+python vault_index.py search notes "..." --explain "an exact phrase"
 ```
 
 `--explain` reports where chunks containing that literal text actually rank, and
