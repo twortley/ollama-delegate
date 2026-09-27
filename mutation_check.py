@@ -47,6 +47,10 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+# Documents the selftest reads, copied into every mutant tree at the same
+# relative path.
+DOCS = ("README.md", "docs/MANUAL.md",
+        "skills/local-inference-delegation/SKILL.md")
 
 # (file, find, replace, what it breaks)
 MUTANTS: list[tuple[str, str, str, str]] = [
@@ -111,6 +115,13 @@ MUTANTS: list[tuple[str, str, str, str]] = [
      '"restart Claude Desktop. This is deliberately not settable "',
      "name one client in a refusal remedy every client receives"),
     # --- the tool surface -------------------------------------------------
+    # A flag the documents use, renamed in the parser: every documented build
+    # command stops working, which is the 2026-09-26 skill defect in reverse.
+    ("vault_index.py", 'b.add_argument("--name", required=True,',
+     'b.add_argument("--label", required=True,',
+     "rename a CLI flag the documents print"),
+    ("ollama_server.py", "            version=__version__,\n", "",
+     "drop the version from server_info"),
     ("index_tools.py", '"source_root": got("source_root"),', "",
      "drop source_root from index_list, which UR-12 requires"),
     ("index_tools.py", "elif gen != generation:", "elif False:",
@@ -176,13 +187,20 @@ def main() -> int:
     survived, missing = [], []
     for filename, find, replace, label in MUTANTS:
         work = tempfile.mkdtemp()
-        # README.md travels with the modules: one assertion reads it, to check
-        # that every environment variable the code reads is documented (UR-03).
-        # Without it that check skips in every mutant run, and a mutant that
-        # undocuments a variable could not be caught at all.
+        # The documents travel with the modules: the selftest reads them, to
+        # check that every environment variable the code reads is documented
+        # (UR-03, in docs/MANUAL.md) and that every vault_index.py command they
+        # print is one the CLI accepts. Without them those checks skip in every
+        # mutant run, and a mutant that breaks either could not be caught.
         for entry in os.listdir(HERE):
-            if entry.endswith(".py") or entry == "README.md":
+            if entry.endswith(".py"):
                 shutil.copy(os.path.join(HERE, entry), work)
+        for doc in DOCS:
+            src = os.path.join(HERE, doc)
+            if os.path.exists(src):
+                os.makedirs(os.path.dirname(os.path.join(work, doc)) or work,
+                            exist_ok=True)
+                shutil.copy(src, os.path.join(work, doc))
 
         target = os.path.join(work, filename)
         with open(target, encoding="utf-8") as handle:

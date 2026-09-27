@@ -1261,7 +1261,9 @@ def status(args) -> None:
     raise SystemExit(1)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI's argument parser. Separate from main() so the server's selftest
+    can parse every documented command line against the real thing."""
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1335,8 +1337,11 @@ def main() -> None:
                         "(default: $OLLAMA_MCP_INDEX_DIR)")
     st.add_argument("index", metavar="NAME", help="index name, not a path")
     st.set_defaults(func=status)
+    return p
 
-    args = p.parse_args()
+
+def main() -> None:
+    args = build_parser().parse_args()
     try:
         args.func(args)
     except IndexerError as exc:

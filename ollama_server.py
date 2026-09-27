@@ -46,9 +46,15 @@ Run:
   python ollama_server.py            # stdio MCP server
   python ollama_server.py --selftest # assertions, exits non-zero on failure
   python ollama_server.py --probe    # live check against the configured host
+  python ollama_server.py --version  # the release this file belongs to
 """
 
 from __future__ import annotations
+
+# The release this file belongs to. server_info reports it, so a result
+# captured through a client can name the code that produced it. A checkout
+# between releases reports the last release it descends from.
+__version__ = "1.0.0"
 
 import json
 import logging
@@ -1264,6 +1270,7 @@ def register(mcp: Any, config: Config) -> None:
         the source.
         """
         return _ok(
+            version=__version__,
             host=config.base_url,
             write_operations={
                 "pull_model": "enabled" if config.allow_pull else "disabled",
@@ -1420,9 +1427,13 @@ def selftest() -> int:
           not any(c in text for text in gates.values() for c in clients))
     check("server_info reports the log level, so every variable's effect shows",
           isinstance(info.get("log_level"), str) and info["log_level"] != "")
+    check("server_info reports the release version",
+          info.get("version") == __version__
+          and re.fullmatch(r"\d+\.\d+\.\d+", str(info.get("version"))) is not None)
 
     print("Configuration is discoverable without reading source")
-    # UR-03: the variables must be findable in the README, at their defaults.
+    # UR-03: the variables must be findable in the documented configuration.
+    # Since 1.0.0 that is docs/MANUAL.md; the README is the short front door.
     # OLLAMA_MCP_LOGLEVEL was read by this file and named nowhere in it -- the
     # same class the DS generator caught in August, found again by asking the
     # question mechanically instead of by eye.
@@ -1437,17 +1448,17 @@ def selftest() -> int:
         for name in _var.findall(src.read_text(encoding="utf-8"))
     })
     check("the environment scan finds the variables at all", len(read_names) >= 6)
-    _readme = _here / "README.md"
+    _readme = _here / "docs" / "MANUAL.md"
     if not _readme.exists():
         # An installed copy without the repository cannot be checked. Say so
         # rather than passing quietly: a skipped check that prints nothing is
         # indistinguishable from one that held.
-        print("  ! README.md is not beside this file, so the documentation "
+        print("  ! docs/MANUAL.md is not beside this file, so the documentation "
               "check did NOT run")
     else:
         _text = _readme.read_text(encoding="utf-8")
         undocumented = [name for name in read_names if name not in _text]
-        check("every environment variable the code reads is named in the README",
+        check("every environment variable the code reads is named in the manual",
               not undocumented)
         if undocumented:
             print(f"       undocumented: {', '.join(undocumented)}")
@@ -2492,6 +2503,66 @@ def selftest() -> int:
     finally:
         _vi.urllib.request.urlopen = _real_urlopen
 
+    print("Documented vault_index.py commands parse against the real CLI")
+    # 2026-09-26: the skill told agents to run `build <folder> --out index.json`
+    # six weeks after --out became --name. Nothing tied the documents to the
+    # parser, so every copy of the skill carried a command that could only
+    # fail. This reads every vault_index.py line inside a code fence and parses
+    # it with the CLI's own parser -- no second list of flags to go stale.
+    import contextlib as _ctx
+    import io as _io
+    import shlex as _shlex
+    import vault_index as _vcli
+    _cli = _vcli.build_parser()
+    _fence = re.compile(r"^\s*(```|~~~)")
+    _cmd = re.compile(r"vault_index\.py\s+(.*)$")
+    for _rel in ("README.md", "skills/local-inference-delegation/SKILL.md",
+                 "docs/MANUAL.md"):
+        _doc = _here / _rel
+        if not _doc.exists():
+            print(f"  ! {_rel} is not beside this file, so its commands were "
+                  "NOT checked")
+            continue
+        _found = 0
+        _inside = False
+        _pending = ""
+        for _line in _doc.read_text(encoding="utf-8").splitlines():
+            if _fence.match(_line):
+                _inside = not _inside
+                _pending = ""
+                continue
+            if not _inside:
+                continue
+            if _pending:
+                _line = _pending + " " + _line.strip()
+                _pending = ""
+            # A trailing `\` (bash) or backtick (PowerShell) continues the line.
+            if _line.rstrip().endswith(("\\", "`")):
+                _pending = _line.rstrip()[:-1]
+                continue
+            _m = _cmd.search(_line)
+            if not _m:
+                continue
+            _found += 1
+            _text = _m.group(1).split(";")[0].split("|")[0].strip()
+            try:
+                _argv = _shlex.split(_text, posix=True)
+                with _ctx.redirect_stderr(_io.StringIO()), \
+                        _ctx.redirect_stdout(_io.StringIO()):
+                    _args = _cli.parse_args(_argv)
+                # Parsing is not enough: `search index.json` parses, and fails
+                # at run time because NAME is a name, not a path. Hold every
+                # name the command carries to the CLI's own rule.
+                _names = [getattr(_args, k) for k in ("name", "index")
+                          if isinstance(getattr(_args, k, None), str)]
+                _ok_parse = all(_vcli.NAME_RE.match(n) for n in _names)
+            except (SystemExit, ValueError):
+                _ok_parse = False
+            check(f"{_rel}: `vault_index.py {_text}` is accepted by the CLI", _ok_parse)
+        # A document with zero matches would pass every check above vacuously.
+        check(f"{_rel}: at least one vault_index.py command was found and checked",
+              _found > 0)
+
     print()
     if failures:
         print(f"SELFTEST FAILED: {len(failures)} assertion(s)")
@@ -2576,6 +2647,9 @@ def build_server() -> tuple[Any, Config]:
 
 
 def main() -> int:
+    if "--version" in sys.argv:
+        print(__version__)
+        return 0
     if "--selftest" in sys.argv:
         return selftest()
     if "--probe" in sys.argv:

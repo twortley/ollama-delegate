@@ -1,0 +1,101 @@
+# CI for ollama-delegate.
+#
+# What a green run means, and what it does NOT:
+#   * the selftest passes on Ubuntu and Windows (no Ollama needed: every model
+#     call in it is stubbed)
+#   * a real MCP client, over stdio, sees the nine default tools on BOTH MCP SDK
+#     generations, and server_info reports the version
+#   * every tracked text file is UTF-8 with no BOM, CR or non-breaking space
+#   * every vault_index.py command in the README and the skill is one the CLI
+#     accepts (part of the selftest)
+#   * the skill ZIP a release attaches has the layout a skills-aware client reads
+# It does NOT run a model, touch a live Ollama host, exercise a client's skill
+# loading, or test Python 3.10/3.11 (declared floor; see docs/DESIGN.md).
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    name: selftest (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt
+      - run: python ollama_server.py --selftest
+      - run: python ci/mcp_handshake.py
+
+  sdk-generations:
+    name: MCP SDK ${{ matrix.sdk }}
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ["mcp>=1,<2", "mcp>=2,<3"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install "${{ matrix.sdk }}"
+      - run: python -m pip show mcp
+      - run: python ci/mcp_handshake.py
+      - run: python ollama_server.py --selftest
+
+  encoding:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python ci/check_encoding.py
+
+  skill-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python ci/build_skill_zip.py dist/local-inference-delegation.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: local-inference-delegation
+          path: dist/local-inference-delegation.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [selftest, sdk-generations, encoding, skill-zip]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/download-artifact@v4
+        with:
+          name: local-inference-delegation
+          path: dist
+      # Refuses a tag that disagrees with __version__ or has no CHANGELOG entry.
+      - run: python ci/release_notes.py "${GITHUB_REF_NAME}" > notes.md
+      - run: gh release create "${GITHUB_REF_NAME}" dist/local-inference-delegation.zip --title "${GITHUB_REF_NAME}" --notes-file notes.md --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}

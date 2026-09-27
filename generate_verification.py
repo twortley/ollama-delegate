@@ -110,7 +110,7 @@ PUBLISHABLE_MARKS = {"✅", "⚠️"}
 TIERS = {"assertion", "scripted", "manual", "inspection"}
 # ENV-4 is the unit-test environment. It reaches no Ollama endpoint, by
 # construction, so any test needing a live model cannot have run there.
-NO_HOST_ENVS = {"ENV-4"}
+NO_HOST_ENVS = {"ENV-4", "ENV-8"}
 
 # The defect triage register's decision vocabulary, and no other. A second
 # decision language is how two findings end up describing the same thing and
@@ -344,6 +344,35 @@ def check(data: dict, labels: set[str] | None, states: dict[str, str],
     return findings
 
 
+def frontmatter(doc: dict | None) -> list[str]:
+    """
+    YAML frontmatter from the register's `document` block, in the order given.
+
+    The other published documents carry frontmatter and this one carried none,
+    so the report that states what was verified was the only one with no title,
+    status, revision or date. Every value comes from the register -- never the
+    clock -- so two renders of one register are identical and --check can
+    compare them.
+    """
+    if not doc:
+        return []
+
+    def scalar(v: object) -> str:
+        text = str(v)
+        if text == "" or any(c in text for c in ':#"\'') or text != text.strip():
+            return '"' + text.replace('\\', '\\\\').replace('"', '\\"') + '"'
+        return text
+
+    out = ["---"]
+    for key, value in doc.items():
+        if isinstance(value, list):
+            out.append(f"{key}:")
+            out += [f"  - {scalar(v)}" for v in value]
+        else:
+            out.append(f"{key}: {scalar(value)}")
+    return out + ["---", ""]
+
+
 def render(data: dict, findings: list[str]) -> str:
     tests = data["tests"]
     defects, public = defect_index(data)
@@ -363,7 +392,7 @@ def render(data: dict, findings: list[str]) -> str:
                 .replace("\r\n", "\n").replace("\n", "<br>"))
     counts = {r: sum(1 for t in tests if t.get("result") == r) for r in sorted(RESULTS)}
 
-    out = [
+    out = frontmatter(data.get("document")) + [
         "<!-- GENERATED from verification_manifest.json by "
         "generate_verification.py. Do not hand-edit: your changes will be "
         "overwritten and, worse, will not be checked. -->",

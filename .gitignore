@@ -38,3 +38,6 @@ desktop.ini
 *.index.json
 # The skill ZIP the README builds for upload -- a build product, not source
 /*.zip
+
+# Built by ci/build_skill_zip.py
+/dist/
