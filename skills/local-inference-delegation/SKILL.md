@@ -11,7 +11,7 @@ server exposes it as tools. This skill is about using those well.
 **Go by the tools, not by the server's name.** `ollama-delegate` is what the
 project is called; the name it is registered under is whatever the operator put
 in their client config, and it varies. If you can call `list_models`, `generate`,
-`chat` and `embed`, you are in the right place.
+`chat`, `embed` and `decide`, you are in the right place.
 
 **The failure this exists to prevent is not misuse — it is non-use.** Faced with
 "classify these 200 notes", the default behaviour is to just start classifying,
@@ -84,10 +84,14 @@ Work down this list; stop at the first match.
    normally exactly one. It is *not* interchangeable with a chat model.
 2. **Fill-in-middle code editing** → a model with `insert`. Note it may lack
    `tools`.
-3. **Structured extraction** — classification, tagging, field extraction, JSON
-   out → prefer a model **without** `thinking` in `capabilities`. See below;
+3. **A label from a fixed set, a yes/no, or a grade on a scale** → a model with
+   `decision` in `capabilities`, through `decide`. See *Decisions* below. A
+   decision model is not a text model: `generate` and `chat` refuse one.
+4. **Structured extraction** — field extraction, JSON out, or classification
+   when no decision model is installed → prefer a model **without** `thinking`
+   in `capabilities`, or switch thinking off with `think=false`. See below;
    this is the counterintuitive one and it matters more than size.
-4. **Everything else** → the smallest model whose `context_length` comfortably
+5. **Everything else** → the smallest model whose `context_length` comfortably
    fits the input. Bigger is slower and cold-loads worse; on a
    memory-bandwidth-bound host the difference is large. A 4B model is genuinely
    fine for classification.
@@ -118,6 +122,9 @@ not disobeying.
 
 If you need clean structured output:
 
+- Pass `think=false` — or a low level the model names (`show_model` reports
+  `think_levels`), such as `"low"` — to `generate` or `chat`. The response echoes the level used and reports
+  `thinking_chars`, so you can see what the reasoning cost, or
 - Prefer a model **without** `thinking` for extraction work, or
 - Expect the reasoning and parse the answer out of it, or
 - Give a **generous** `max_tokens` — thousands, not hundreds.
@@ -147,6 +154,49 @@ is corrupt.
 **A `thinking` model may return its reasoning in a separate field**, leaving the
 visible content empty until it finishes. Read both before deciding nothing came
 back.
+
+## Decisions — `decide`
+
+For the commonest bulk job — put each item in one of a few labels, answer a
+yes/no about it, or grade it on a scale — a **decision model** returns the
+answer as numbers instead of prose. Nothing to parse, and a probability on
+every answer.
+
+```
+decide(model, state="<the item>", questions={
+  "category": {"type": "choice", "instructions": "Which category fits this entry?",
+               "criteria": {"fault": "Equipment failed or tripped",
+                            "deviation": "A parameter left its range, no equipment cause",
+                            "routine": "Nothing out of the ordinary"}},
+  "followup": {"type": "noul", "instructions": "Does this need follow-up today?"},
+  "urgency":  {"type": "score", "instructions": "How urgent is the follow-up?",
+               "criteria": ["none", "next review", "today", "within the hour"]}})
+```
+
+- **One narrow judgement per question.** Questions about the same item go in one
+  call; none of them sees another's answer.
+- **Put the whole meaning in `instructions` and `criteria`.** The ids are for you;
+  the model reads the text.
+- **Give nothing-fits somewhere to go.** A choice must pick one of the labels it
+  is offered; without a `none` label, an item that fits none still gets one.
+- **`confidence` is not accuracy.** It says how concentrated the distribution is.
+  Before trusting a threshold, run twenty items whose right answers you know and
+  see where the wrong ones fall. **Send items below it back to the operator or
+  to a stronger model** rather than accepting them, and say how many.
+- **`noul` is the probability of yes.** 0.5 means undecided, not "somewhat".
+- **Read `verdict` first, as everywhere.** `bad_response` means an answer did
+  not fit the question — a label that was not offered, probabilities that do not
+  sum to one — and none of that call's answers should be used.
+
+It needs Ollama 0.35.0 or newer; `server_info` reports `decide_supported`. If no
+model has `decision` in `capabilities`, classify with `generate` as below, and
+say that is what you did.
+
+**A decision model can be listed and still unusable.** Measured on Ollama
+0.40.12: two decision models pulled a month earlier were refused by `decide`
+with `ollama_error` — *"downloaded in a format that is no longer supported …
+run 'ollama pull'"*. Tell the operator to re-pull it; do not quietly fall back
+to `generate` for the job.
 
 ## Local versus cloud
 
@@ -322,7 +372,11 @@ Every response carries a `verdict`. Only one means "use this".
 | `completion_unverified` | Ollama did not report how it ended. Cannot be confirmed complete — treat as possibly truncated |
 | `context_exceeded` | Input too large. Chunk it or pick a bigger model |
 | `context_unknown` | The limit could not be read, so nothing was checked |
-| `empty_generation` | Text came back empty |
+| `empty_generation` | Text came back empty. If `thinking_chars` is set, the budget went on thinking: raise `max_tokens` or lower `think` |
+| `wrong_capability` | The model is the wrong kind for this tool — a decision model sent to `generate`, a text model sent to `decide`. The remedy names the right tool |
+| `bad_response` | The answer does not fit the question asked. Do not use any part of it |
+| `incomplete` | Some of what was asked for came back missing. Do not use a partial result |
+| `endpoint_unavailable` | The Ollama server is too old for `decide` |
 | `model_not_found` | Not installed — **and if it was there before, it has been deleted.** Worth reporting to the operator |
 | `ollama_unreachable` | The server is not running or the host is down |
 
