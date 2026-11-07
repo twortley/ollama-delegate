@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Start the server over stdio with the MCP SDK's own client, and check what a real
-client sees: the nine default tools, and a server_info that carries the version.
+client sees: the ten default tools, and a server_info that carries the version.
 
     python ci/mcp_handshake.py
 
@@ -22,7 +22,8 @@ from mcp.client.stdio import stdio_client
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DEFAULT_TOOLS = {"server_info", "list_models", "show_model", "list_running",
-                 "generate", "chat", "embed", "pull_model", "delete_model"}
+                 "generate", "chat", "embed", "decide", "pull_model",
+                 "delete_model"}
 
 
 async def run() -> int:
