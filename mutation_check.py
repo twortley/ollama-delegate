@@ -163,6 +163,45 @@ MUTANTS: list[tuple[str, str, str, str]] = [
     ("index_tools.py",
      'if top_value and spent[top_value] > (run.get("judged") or 0) / 2:',
      "if False:", "never flag a saturated reranker"),
+    # --- decision models and capability routing (1.1.0) -------------------
+    # The 2026-11-07 defect: a decision model run through generate came back
+    # as prose. Each mutant restores one way that can happen again. An anchor
+    # is replaced at its FIRST occurrence, which for the shared lines is
+    # generate's, the tool the defect was found in.
+    ("ollama_server.py",
+     '_capability_refusal(ctx, model, "generate", "completion")', "None",
+     "let generate run a decision-only model"),
+    ("ollama_server.py", "    if not caps or needs in caps:\n        return None",
+     "    if needs in (caps or []):\n        return None\n"
+     '    caps = caps or ["decision"]',
+     "refuse a model whose capabilities were not reported"),
+    ("ollama_server.py", '            if a.get("choice") not in labels:',
+     "            if False:", "accept a choice outside the offered labels"),
+    ("ollama_server.py",
+     "    elif abs(sum(vals) - 1.0) > _PROBABILITY_SLACK:",
+     "    elif False:", "accept probabilities that do not sum to one"),
+    ("ollama_server.py",
+     "            if not isinstance(s, (int, float)) or not 0.0 <= s <= n - 1:",
+     "            if not isinstance(s, (int, float)):",
+     "accept a score beyond the top level"),
+    ("ollama_server.py", '            out.append(f"no answer for {qid!r}")\n',
+     "", "pass over a question left unanswered"),
+    ("ollama_server.py", '            if supported == "no" or known:',
+     "            if False:",
+     "report a missing endpoint on an old Ollama as a missing model"),
+    ("ollama_server.py",
+     '    return "yes" if parsed >= DECIDE_MIN_OLLAMA else "no"',
+     '    return "yes"', "claim decide works on any Ollama version"),
+    ("ollama_server.py", '            payload["think"] = think',
+     "            pass", "accept a think level and never send it"),
+    ("ollama_server.py", '        if result.get("thinking_chars"):',
+     "        if False:",
+     "report an answer lost to thinking as a model that said nothing"),
+    ("ollama_server.py",
+     '            ollama_version=ollama["version"] or ollama["source"],\n',
+     "", "drop Ollama's version from server_info"),
+    ("ollama_server.py", '            levels["think_levels"] = thinking["values"]',
+     "            pass", "hide the think levels Ollama reports"),
 ]
 
 

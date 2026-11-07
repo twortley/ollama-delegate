@@ -54,7 +54,7 @@ from __future__ import annotations
 # The release this file belongs to. server_info reports it, so a result
 # captured through a client can name the code that produced it. A checkout
 # between releases reports the last release it descends from.
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 import json
 import logging
@@ -126,7 +126,7 @@ class Config:
     timeout: float = 300.0
     pull_timeout: float = 3600.0
     # Directory of `<name>.index.json` files. Unset means the index_* tools are
-    # NOT REGISTERED AT ALL, so a default clone exposes exactly the nine-tool
+    # NOT REGISTERED AT ALL, so a default clone exposes exactly the ten-tool
     # bridge the README documents. Setting it does three jobs at once: it opts
     # the tools in, it is the allowlist (only indexes in here are reachable),
     # and it answers "where does the index live" -- which the CLI previously
@@ -501,24 +501,31 @@ class ContextCache:
 
     def limit_for(self, model: str) -> dict[str, Any]:
         """
-        Returns {"limit": int|None, "source": str, "disagreement": str|None}.
+        Returns {"limit": int|None, "source": str, "disagreement": str|None,
+        "capabilities": list[str]|None}.
 
         `limit` is None when it genuinely could not be determined. Callers must
         treat that as "unknown", never as "unlimited" -- defaulting an unknown
         limit to a generous number produces a wrong answer wearing good
         provenance, which is the non-answer rule's most dangerous shape.
+        `capabilities` rides on the same /api/show call, and None means the
+        same thing: not read, so no check may pass or fail against it.
         """
         if model in self._limits:
             return self._limits[model]
 
         entry: dict[str, Any] = {"limit": None, "source": "unavailable",
-                                 "disagreement": None}
+                                 "disagreement": None, "capabilities": None}
         try:
             d = _request(self.config, "POST", "/api/show", {"model": model})
         except Refused as exc:
             entry["source"] = f"unavailable ({exc.verdict})"
             self._limits[model] = entry
             return entry
+
+        caps = d.get("capabilities")
+        if isinstance(caps, list):
+            entry["capabilities"] = [str(c) for c in caps]
 
         info = d.get("model_info") or {}
         arch_limit = next(
@@ -627,6 +634,188 @@ def _check_context(
     }
 
 
+# --------------------------------------------------------------------------
+# Capability routing
+# --------------------------------------------------------------------------
+
+# A decision model (capabilities ["decision"], sometimes with "vision") is not a
+# text generator, but /api/generate does not refuse one. On 2026-11-07 `nimble`
+# through `generate` returned "Thinking Process: 1. **Analyze the Request:**"
+# and ran into the token limit: generated prose that reads like an answer,
+# without the probabilities that are the reason to use a decision model. That
+# is the non-answer rule's shape, so the tool refuses and names the right one.
+#
+# The check fires ONLY when the capability list was read, is non-empty, lacks
+# the capability the tool needs, and names one that another tool serves. An
+# unread or empty list proceeds: a capability Ollama did not report is not
+# evidence the model lacks it, and refusing on absence would block every model
+# on an Ollama too old to report capabilities at all.
+_TOOL_FOR_CAPABILITY = {"decision": "decide", "embedding": "embed",
+                        "completion": "generate or chat"}
+
+
+def _capability_refusal(
+    cache: "ContextCache", model: str, tool: str, needs: str
+) -> dict[str, Any] | None:
+    """Refuse a model that reports a different capability. None to proceed."""
+    caps = cache.limit_for(model).get("capabilities")
+    if not caps or needs in caps:
+        return None
+    served = [c for c in caps if c in _TOOL_FOR_CAPABILITY and c != needs]
+    if not served:
+        return None
+    other = _TOOL_FOR_CAPABILITY[served[0]]
+    return {
+        "verdict": "wrong_capability",
+        "error": (f"{model!r} reports capabilities {caps}, without {needs!r}, "
+                  f"so {tool} cannot use it. Ollama would run it anyway and "
+                  "return text that looks like an answer and is not one."),
+        "remedy": f"Call {other} with this model, or pick a model whose "
+                  f"capabilities include {needs!r} (list_models with "
+                  "include_details=true).",
+        "model": model,
+        "capabilities": caps,
+    }
+
+
+# --------------------------------------------------------------------------
+# Decision questions and answers
+# --------------------------------------------------------------------------
+
+_QUESTION_TYPES = ("choice", "noul", "score")
+
+# A distribution whose probabilities do not sum to one is not a distribution.
+# Ollama rounds to four places, so a little slack is needed and no more.
+_PROBABILITY_SLACK = 0.02
+
+
+def _question_problem(questions: Any) -> str | None:
+    """
+    The first thing wrong with a questions map, or None.
+
+    Checks shape only -- what makes the request meaningless or the answer
+    uncheckable. Upper limits (how many questions, labels or levels) are left
+    to Ollama, which reports its own; a limit copied from a release note into
+    this file goes stale silently.
+    """
+    if not isinstance(questions, dict) or not questions:
+        return "questions must be a non-empty map of {id: question}."
+    for qid, q in questions.items():
+        if not isinstance(q, dict):
+            return f"questions[{qid!r}] must be an object."
+        kind = q.get("type")
+        if kind not in _QUESTION_TYPES:
+            return (f"questions[{qid!r}].type is {kind!r}; it must be one of "
+                    + ", ".join(_QUESTION_TYPES) + ".")
+        if not isinstance(q.get("instructions"), str) or \
+                not q["instructions"].strip():
+            return f"questions[{qid!r}].instructions must be a non-empty string."
+        crit = q.get("criteria")
+        if kind == "choice" and (not isinstance(crit, dict) or len(crit) < 2):
+            return (f"questions[{qid!r}] is a choice and needs criteria: a map "
+                    "of at least two labels to what each means.")
+        if kind == "score" and (not isinstance(crit, list) or len(crit) < 2):
+            return (f"questions[{qid!r}] is a score and needs criteria: an "
+                    "ordered list of at least two levels, lowest first.")
+    return None
+
+
+def _answer_problems(questions: dict[str, Any], answers: Any) -> list[str]:
+    """
+    Everything about the answers that does not match the questions asked.
+
+    Typed output guarantees an interface, not that the interface was honoured.
+    A choice outside the offered labels, a probability outside [0, 1], or an
+    answer missing for a question asked is a non-answer, and is reported as
+    one rather than passed through as a decision.
+    """
+    if not isinstance(answers, dict):
+        return ["the response has no `answers` object"]
+    out: list[str] = []
+    for qid, q in questions.items():
+        a = answers.get(qid)
+        if not isinstance(a, dict):
+            out.append(f"no answer for {qid!r}")
+            continue
+        kind = q.get("type")
+        if a.get("type") not in (None, kind):
+            out.append(f"{qid!r} asked as {kind}, answered as {a.get('type')}")
+            continue
+        if kind == "choice":
+            labels = set(q.get("criteria") or {})
+            if a.get("choice") not in labels:
+                out.append(f"{qid!r} chose {a.get('choice')!r}, which was not "
+                           "one of the labels offered")
+            out.extend(_distribution_problems(qid, a.get("probabilities"),
+                                              labels))
+        elif kind == "noul":
+            p = a.get("noul")
+            if not isinstance(p, (int, float)) or not 0.0 <= p <= 1.0:
+                out.append(f"{qid!r} noul is {p!r}, not a probability")
+        elif kind == "score":
+            n = len(q.get("criteria") or [])
+            s = a.get("score")
+            if not isinstance(s, (int, float)) or not 0.0 <= s <= n - 1:
+                out.append(f"{qid!r} score is {s!r}, outside 0..{n - 1}")
+            if "probabilities" in a:
+                out.extend(_distribution_problems(
+                    qid, a.get("probabilities"), {str(i) for i in range(n)}))
+    return out
+
+
+def _distribution_problems(qid: str, probs: Any, keys: set[str]) -> list[str]:
+    if not isinstance(probs, dict):
+        return [f"{qid!r} has no probabilities"]
+    out = []
+    if set(map(str, probs)) != keys:
+        out.append(f"{qid!r} probabilities cover {sorted(map(str, probs))}, "
+                   f"not the options asked {sorted(keys)}")
+    vals = list(probs.values())
+    if not all(isinstance(v, (int, float)) and 0.0 <= v <= 1.0 for v in vals):
+        out.append(f"{qid!r} has a probability outside [0, 1]")
+    elif abs(sum(vals) - 1.0) > _PROBABILITY_SLACK:
+        out.append(f"{qid!r} probabilities sum to {sum(vals):.3f}, not 1")
+    return out
+
+
+# --------------------------------------------------------------------------
+# Ollama's own version
+# --------------------------------------------------------------------------
+
+# /v1/systemone arrived in Ollama 0.35.0. On an older server the endpoint does
+# not exist and returns 404 -- which `_request` reports as `model_not_found`,
+# sending the reader to the wrong problem. So `decide` asks for the version when
+# it gets a 404, and server_info reports it, so the requirement is visible
+# before a call rather than only after one fails.
+DECIDE_MIN_OLLAMA = (0, 35, 0)
+
+
+def _parse_version(raw: Any) -> tuple[int, int, int] | None:
+    """'0.40.15' -> (0, 40, 15). Anything unparseable is None, never a guess."""
+    m = re.match(r"^\s*v?(\d+)\.(\d+)\.(\d+)", str(raw or ""))
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+def _ollama_version(config: Config) -> dict[str, Any]:
+    """{"version": str|None, "source": str}. Short timeout: it is a probe."""
+    try:
+        raw = _request(config, "GET", "/api/version", timeout=5)
+    except Refused as exc:
+        return {"version": None, "source": f"unavailable ({exc.verdict})"}
+    v = raw.get("version") if isinstance(raw, dict) else None
+    if not v:
+        return {"version": None, "source": "unavailable (no version field)"}
+    return {"version": str(v), "source": "/api/version"}
+
+
+def _decide_supported(version: str | None) -> str:
+    """"yes", "no", or "unknown" -- three states, because unknown is not no."""
+    parsed = _parse_version(version)
+    if parsed is None:
+        return "unknown"
+    return "yes" if parsed >= DECIDE_MIN_OLLAMA else "no"
+
+
 def _throughput(raw: dict[str, Any]) -> dict[str, Any]:
     """
     Extract generation throughput from an Ollama response.
@@ -673,6 +862,16 @@ def _apply_completion_verdict(
     """
     if not text.strip():
         result["verdict"] = "empty_generation"
+        if result.get("thinking_chars"):
+            # The answer is empty but the model wrote reasoning: the budget went
+            # on thinking. A different remedy from "the model said nothing".
+            result["remedy"] = (
+                f"The model thought ({result['thinking_chars']:,} characters) "
+                "and returned no answer, usually because thinking used the "
+                "whole max_tokens budget. Raise max_tokens, or pass a lower "
+                "think level (or think=false) for a task that does not need it."
+            )
+            return
         result["remedy"] = (
             "The model returned no text. Check max_tokens is not 0, or try a "
             "different model."
@@ -713,6 +912,22 @@ def _apply_completion_verdict(
             f"Unrecognised done_reason {done_reason!r}. Treat completeness as "
             "unconfirmed rather than assuming this response finished normally."
         )
+
+
+def _thinking_report(think: Any, thinking: Any) -> dict[str, Any]:
+    """
+    What a response says about thinking: the level asked for, if any, and how
+    much reasoning came back. The reasoning text itself is not returned -- it
+    can be many times the answer's size and the caller asked for the answer --
+    but its length is, because a thinking model that spends its budget there
+    looks, from the answer alone, like a model that said nothing.
+    """
+    out: dict[str, Any] = {}
+    if think is not None:
+        out["think"] = think
+    if isinstance(thinking, str) and thinking:
+        out["thinking_chars"] = len(thinking)
+    return out
 
 
 def _human_size(n: int | None) -> str:
@@ -866,6 +1081,15 @@ def register(mcp: Any, config: Config) -> None:
         context_length = next(
             (v for k, v in info.items() if k.endswith(".context_length")), None
         )
+        # Ollama 0.34.3+ reports {"thinking": {"values": [...], "default": ...}}
+        # for a model with selectable levels (observed on 0.40.12, gpt-oss:20b:
+        # low/medium/high, default medium). Absent means not reported -- not
+        # "no levels" -- so the keys are only present when Ollama said so.
+        thinking = raw.get("thinking")
+        levels: dict[str, Any] = {}
+        if isinstance(thinking, dict) and isinstance(thinking.get("values"), list):
+            levels["think_levels"] = thinking["values"]
+            levels["think_default"] = thinking.get("default")
         return _ok(
             model=model,
             location=_location(model),
@@ -874,6 +1098,7 @@ def register(mcp: Any, config: Config) -> None:
             details=raw.get("details", {}),
             parameters=raw.get("parameters"),
             template_present=bool(raw.get("template")),
+            **levels,
         )
 
     @mcp.tool()
@@ -916,6 +1141,7 @@ def register(mcp: Any, config: Config) -> None:
         max_tokens: int | None = None,
         json_mode: bool = False,
         allow_truncation: bool = False,
+        think: bool | str | None = None,
     ) -> dict[str, Any]:
         """
         Single-turn completion. The delegation workhorse.
@@ -935,8 +1161,15 @@ def register(mcp: Any, config: Config) -> None:
             prompt: the instruction or content to process.
             system: optional system prompt setting role and constraints.
             temperature: 0.0 for deterministic extraction, higher for prose.
-            max_tokens: cap on generated tokens (num_predict).
+            max_tokens: cap on generated tokens (num_predict). On a thinking
+                model the thinking counts against it.
             json_mode: force syntactically valid JSON output.
+            think: thinking level for a model that supports it -- true/false,
+                or a level the model names (show_model -> think_levels). Unset
+                leaves the model's default. A bulk classification rarely needs
+                thinking; switching it off is cheaper.
+
+        A model whose capabilities are `decision` is refused here: use decide.
         """
         try:
             guard.check("generate", model)
@@ -949,7 +1182,8 @@ def register(mcp: Any, config: Config) -> None:
                 "error": "prompt is empty; nothing to generate from.",
             }
 
-        refusal = _check_context(ctx, model, prompt + system, allow_truncation)
+        refusal = (_capability_refusal(ctx, model, "generate", "completion")
+                   or _check_context(ctx, model, prompt + system, allow_truncation))
         if refusal:
             return refusal
 
@@ -958,6 +1192,8 @@ def register(mcp: Any, config: Config) -> None:
             payload["system"] = system
         if json_mode:
             payload["format"] = "json"
+        if think is not None:
+            payload["think"] = think
 
         options: dict[str, Any] = {}
         if temperature is not None:
@@ -980,6 +1216,7 @@ def register(mcp: Any, config: Config) -> None:
             duration_s=round((raw.get("total_duration") or 0) / 1e9, 2),
             done_reason=raw.get("done_reason"),
             **_throughput(raw),
+            **_thinking_report(think, raw.get("thinking")),
         )
         _apply_completion_verdict(result, raw, text)
         return result
@@ -992,6 +1229,7 @@ def register(mcp: Any, config: Config) -> None:
         max_tokens: int | None = None,
         json_mode: bool = False,
         allow_truncation: bool = False,
+        think: bool | str | None = None,
     ) -> dict[str, Any]:
         """
         Multi-turn conversation, preserving history.
@@ -1008,8 +1246,11 @@ def register(mcp: Any, config: Config) -> None:
             messages: list of {"role": "system"|"user"|"assistant",
                      "content": "..."} in order.
             temperature: sampling temperature.
-            max_tokens: cap on generated tokens.
+            max_tokens: cap on generated tokens, thinking included.
             json_mode: force syntactically valid JSON output.
+            think: thinking level, as for generate. Unset keeps the default.
+
+        A model whose capabilities are `decision` is refused here: use decide.
         """
         try:
             guard.check("chat", model)
@@ -1039,12 +1280,13 @@ def register(mcp: Any, config: Config) -> None:
         # The WHOLE history is re-sent every turn, so the budget is the sum of
         # all messages, not the newest one. A conversation that fits on turn 3
         # can overflow on turn 9 with no change in behaviour from the caller.
-        refusal = _check_context(
-            ctx,
-            model,
-            "".join(str(m.get("content", "")) for m in messages),
-            allow_truncation,
-        )
+        refusal = _capability_refusal(ctx, model, "chat", "completion") or \
+            _check_context(
+                ctx,
+                model,
+                "".join(str(m.get("content", "")) for m in messages),
+                allow_truncation,
+            )
         if refusal:
             return refusal
 
@@ -1055,6 +1297,8 @@ def register(mcp: Any, config: Config) -> None:
         }
         if json_mode:
             payload["format"] = "json"
+        if think is not None:
+            payload["think"] = think
 
         options: dict[str, Any] = {}
         if temperature is not None:
@@ -1079,6 +1323,7 @@ def register(mcp: Any, config: Config) -> None:
             duration_s=round((raw.get("total_duration") or 0) / 1e9, 2),
             done_reason=raw.get("done_reason"),
             **_throughput(raw),
+            **_thinking_report(think, message.get("thinking")),
         )
         # Same completion logic as generate. chat previously checked only for
         # empty content, so it had the identical blind spot.
@@ -1204,6 +1449,112 @@ def register(mcp: Any, config: Config) -> None:
             embeddings=vectors,
         )
 
+    @mcp.tool()
+    def decide(
+        model: str,
+        state: str,
+        questions: dict[str, dict[str, Any]],
+        allow_truncation: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Ask a local DECISION model typed questions about some content, and get
+        probabilities back instead of generated text. For labelling, yes/no
+        checks and grading in bulk, where a label parsed out of prose would
+        otherwise have to be trusted.
+
+        Needs a model whose capabilities include `decision` (list_models with
+        include_details=true) and Ollama 0.35.0 or newer (server_info).
+
+        Args:
+            model: a decision model name from list_models.
+            state: the content the questions are about. Plain text, or JSON
+                serialised to text when it has several named parts.
+            questions: {id: question}. Each question is one of
+                {"type": "choice", "instructions": "...",
+                 "criteria": {"label": "what the label means", ...}}
+                    -> `choice`, a probability per label, `confidence`
+                {"type": "noul", "instructions": "Does ...?"}
+                    -> `noul`, the probability the answer is yes
+                {"type": "score", "instructions": "...",
+                 "criteria": ["lowest level", ..., "highest level"]}
+                    -> `score`, a probability-weighted position on the levels
+                Every question sees the same state and none sees another's
+                answer. Ids are for your code; put the whole meaning in the
+                instructions. Include a "none of these" label where nothing
+                may fit.
+
+        `confidence` is how concentrated the model's distribution is. It is NOT
+        the probability that the answer is right: set any threshold on your own
+        labelled examples, and send items under it back for a closer look.
+        """
+        try:
+            guard.check("decide", model)
+        except Refused as exc:
+            return _refusal(exc)
+
+        if not state or not str(state).strip():
+            return {"verdict": "invalid_request",
+                    "error": "state is empty; there is nothing to decide about."}
+        problem = _question_problem(questions)
+        if problem:
+            return {"verdict": "invalid_request", "error": problem,
+                    "remedy": "See decide's description for the three question "
+                              "shapes."}
+
+        refusal = (_capability_refusal(ctx, model, "decide", "decision")
+                   or _check_context(ctx, model,
+                                     str(state) + json.dumps(questions),
+                                     allow_truncation, headroom=0.05))
+        if refusal:
+            return refusal
+
+        payload = {"model": model, "state": str(state), "questions": questions}
+        started = time.monotonic()
+        try:
+            raw = _request(config, "POST", "/v1/systemone", payload)
+        except Refused as exc:
+            if exc.verdict != "model_not_found":
+                return _refusal(exc)
+            # A 404 here means either no such model or no such ENDPOINT, and
+            # the two have different remedies. Ask Ollama which.
+            ollama = _ollama_version(config)
+            supported = _decide_supported(ollama["version"])
+            known = ctx.limit_for(model).get("capabilities") is not None
+            if supported == "no" or known:
+                return {
+                    "verdict": "endpoint_unavailable",
+                    "error": (f"Ollama at {config.base_url} returned 404 for "
+                              f"/v1/systemone (Ollama "
+                              f"{ollama['version'] or ollama['source']})."),
+                    "remedy": ("Decision models need Ollama "
+                               f"{'.'.join(map(str, DECIDE_MIN_OLLAMA))} or "
+                               "newer. Upgrade Ollama, then retry."),
+                }
+            return _refusal(exc)
+        elapsed = round(time.monotonic() - started, 2)
+
+        answers = raw.get("answers") if isinstance(raw, dict) else None
+        issues = _answer_problems(questions, answers)
+        result = _ok(
+            model=model,
+            location=_location(model),
+            answers=answers if isinstance(answers, dict) else {},
+            usage=raw.get("usage") if isinstance(raw, dict) else None,
+            duration_s=elapsed,
+        )
+        if issues:
+            # Only missing answers: incomplete. Anything answered wrongly:
+            # bad_response, because a wrong answer is worse than none.
+            if all(i.startswith("no answer") for i in issues):
+                result["verdict"] = "incomplete"
+            else:
+                result["verdict"] = "bad_response"
+            result["problems"] = issues
+            result["remedy"] = ("Do not use these answers as decided. The "
+                                "response did not match the questions asked; "
+                                "the problems above say where.")
+        return result
+
     # ----------------------------------------------------- model management
 
     @mcp.tool()
@@ -1267,11 +1618,20 @@ def register(mcp: Any, config: Config) -> None:
         Report what this MCP server is configured to do and what it refuses.
 
         Self-explaining, so a refused call can be understood without reading
-        the source.
+        the source. Also reports the Ollama server's own version, which
+        decides whether decide can work at all.
         """
+        ollama = _ollama_version(config)
         return _ok(
             version=__version__,
             host=config.base_url,
+            # Ollama's version, not this server's. Asked live, with a short
+            # timeout; unreachable is reported as itself, never as a version.
+            ollama_version=ollama["version"] or ollama["source"],
+            decide_supported=(
+                f"{_decide_supported(ollama['version'])} -- decide needs Ollama "
+                f">= {'.'.join(map(str, DECIDE_MIN_OLLAMA))} and a model whose "
+                "capabilities include `decision`"),
             write_operations={
                 "pull_model": "enabled" if config.allow_pull else "disabled",
                 "delete_model": "enabled" if config.allow_delete else "disabled",
@@ -1372,7 +1732,9 @@ def selftest() -> int:
                 return fn
             return decorate
 
-    register(_CollectMCP(), Config())
+    # A closed port, not the default host: server_info now asks Ollama for its
+    # version, and the selftest must not depend on -- or reach -- a live host.
+    register(_CollectMCP(), Config(base_url="http://127.0.0.1:1", timeout=2.0))
     # Adding a gated tool means adding it here. The pairing is explicit so that
     # a new gate with no documentation fails this suite rather than shipping.
     for tool_name, flag in (("pull_model", "OLLAMA_MCP_ALLOW_PULL"),
@@ -1430,6 +1792,9 @@ def selftest() -> int:
     check("server_info reports the release version",
           info.get("version") == __version__
           and re.fullmatch(r"\d+\.\d+\.\d+", str(info.get("version"))) is not None)
+    check("server_info reports an unreachable Ollama as unavailable, not a version",
+          str(info.get("ollama_version", "")).startswith("unavailable")
+          and str(info.get("decide_supported", "")).startswith("unknown"))
 
     print("Configuration is discoverable without reading source")
     # UR-03: the variables must be findable in the documented configuration.
@@ -1767,6 +2132,222 @@ def selftest() -> int:
         _verdict({"done_reason": "stop"}, "   ")["verdict"] == "empty_generation",
     )
 
+    print("Decision models, and capability routing")
+    # 2026-11-07: `nimble` through generate returned generated prose and no
+    # probabilities, reported by v1.0.0 as an ordinary (truncated) generation.
+    # Every check below runs the REAL registered tool against a stubbed
+    # transport, and records which paths were requested, so "refused before
+    # the call" is observed rather than inferred from the verdict.
+    _saved_request_d = _request
+    _calls: list[str] = []
+
+    def _decision_tools(show: dict[str, Any] | None, routes: dict[str, Any]):
+        reg: dict[str, Any] = {}
+
+        class _Fake:
+            def tool(self):
+                def d(f):
+                    reg[f.__name__] = f
+                    return f
+                return d
+
+        def fake(config, method, path, payload=None, timeout=None):
+            _calls.append(path)
+            if path == "/api/show":
+                if show is None:
+                    raise Refused("model_not_found", "404 /api/show", "")
+                return show
+            route = routes.get(path)
+            if isinstance(route, Refused):
+                raise route
+            if callable(route):
+                return route(payload)
+            if route is None:
+                raise AssertionError(f"unexpected path {path}")
+            return route
+
+        globals()["_request"] = fake
+        _calls.clear()
+        register(_Fake(), Config())
+        return reg
+
+    _show_decision = {"capabilities": ["decision", "vision"],
+                      "model_info": {"qwen35.context_length": 262144}}
+    _show_text = {"capabilities": ["completion", "tools", "thinking"],
+                  "model_info": {"gemma4.context_length": 262144}}
+    _gen_ok = {"response": "negative", "done_reason": "stop"}
+    _q = {
+        "label": {"type": "choice", "instructions": "Which category?",
+                  "criteria": {"fault": "Equipment failed",
+                               "routine": "Nothing unusual"}},
+        "followup": {"type": "noul", "instructions": "Does it need follow-up?"},
+        "urgency": {"type": "score", "instructions": "How urgent?",
+                    "criteria": ["none", "today", "within the hour"]},
+    }
+    _good = {"model": "nimble", "answers": {
+        "label": {"type": "choice", "choice": "fault",
+                  "probabilities": {"fault": 0.93, "routine": 0.07},
+                  "confidence": 0.86},
+        "followup": {"type": "noul", "noul": 0.91},
+        "urgency": {"type": "score", "score": 1.4, "confidence": 0.5,
+                    "probabilities": {"0": 0.1, "1": 0.4, "2": 0.5}}},
+        "usage": {"input_tokens": 170, "output_tokens": 1}}
+
+    try:
+        t = _decision_tools(_show_decision, {"/api/generate": _gen_ok})
+        r = t["generate"](model="nimble", prompt="Classify this.")
+        check("generate refuses a decision-only model",
+              r.get("verdict") == "wrong_capability")
+        check("the refusal names decide as the way out",
+              "decide" in r.get("remedy", ""))
+        check("the refusal is made before any generation is requested",
+              "/api/generate" not in _calls)
+
+        t = _decision_tools(_show_decision, {"/api/chat": {}})
+        r = t["chat"](model="clef-flash",
+                      messages=[{"role": "user", "content": "Classify this."}])
+        check("chat refuses a decision-only model, before the call",
+              r.get("verdict") == "wrong_capability"
+              and "/api/chat" not in _calls)
+
+        t = _decision_tools(_show_text, {"/api/generate": _gen_ok})
+        check("generate still serves a completion model",
+              t["generate"](model="gemma4:12b", prompt="x").get("verdict")
+              == "ok")
+
+        t = _decision_tools({"model_info": {"x.context_length": 4096}},
+                            {"/api/generate": _gen_ok})
+        check("unreported capabilities are not a refusal",
+              t["generate"](model="old", prompt="x").get("verdict") == "ok")
+
+        t = _decision_tools(_show_text, {"/v1/systemone": _good})
+        r = t["decide"](model="gemma4:12b", state="log", questions=_q)
+        check("decide refuses a completion-only model, naming generate",
+              r.get("verdict") == "wrong_capability"
+              and "generate" in r.get("remedy", "")
+              and "/v1/systemone" not in _calls)
+
+        bad_questions = {
+            "an empty questions map": {},
+            "an unknown question type": {"a": {"type": "maybe",
+                                               "instructions": "x"}},
+            "a choice with one label": {"a": {"type": "choice",
+                                              "instructions": "x",
+                                              "criteria": {"only": "one"}}},
+            "a score whose levels are not a list": {
+                "a": {"type": "score", "instructions": "x",
+                      "criteria": {"lo": "a", "hi": "b"}}},
+            "a question with no instructions": {"a": {"type": "noul"}},
+        }
+        for label, qs in bad_questions.items():
+            t = _decision_tools(_show_decision, {"/v1/systemone": _good})
+            r = t["decide"](model="nimble", state="log", questions=qs)
+            check(f"decide refuses {label}, before any call",
+                  r.get("verdict") == "invalid_request" and not _calls)
+
+        t = _decision_tools(_show_decision, {"/v1/systemone": _good})
+        r = t["decide"](model="nimble", state="log", questions=_q)
+        check("decide returns ok, local, with every answer",
+              r.get("verdict") == "ok" and r.get("location") == "local"
+              and set(r.get("answers", {})) == set(_q))
+
+        sent: dict[str, Any] = {}
+
+        def _capture(payload):
+            sent.update(payload)
+            return _good
+
+        t = _decision_tools(_show_decision, {"/v1/systemone": _capture})
+        t["decide"](model="nimble", state="log", questions=_q)
+        check("decide sends state and questions unaltered",
+              sent.get("state") == "log" and sent.get("questions") == _q)
+
+        def _mutate(qid: str, key: str, val: Any) -> dict[str, Any]:
+            out = json.loads(json.dumps(_good))
+            out["answers"][qid][key] = val
+            return out
+
+        wrong = {
+            "a choice outside the offered labels":
+                _mutate("label", "choice", "billing"),
+            "probabilities that do not sum to one":
+                _mutate("label", "probabilities",
+                        {"fault": 0.9, "routine": 0.5}),
+            "probabilities over the wrong labels":
+                _mutate("label", "probabilities", {"fault": 0.9, "other": 0.1}),
+            "a noul outside [0, 1]": _mutate("followup", "noul", 1.3),
+            "a score beyond the top level": _mutate("urgency", "score", 2.5),
+        }
+        for label, resp in wrong.items():
+            t = _decision_tools(_show_decision, {"/v1/systemone": resp})
+            r = t["decide"](model="nimble", state="log", questions=_q)
+            check(f"decide reports {label} as bad_response",
+                  r.get("verdict") == "bad_response"
+                  and bool(r.get("problems")))
+
+        partial = json.loads(json.dumps(_good))
+        del partial["answers"]["urgency"]
+        t = _decision_tools(_show_decision, {"/v1/systemone": partial})
+        r = t["decide"](model="nimble", state="log", questions=_q)
+        check("a question left unanswered is incomplete, not ok",
+              r.get("verdict") == "incomplete"
+              and any("urgency" in p for p in r.get("problems", [])))
+
+        _404 = Refused("model_not_found", "404 /v1/systemone", "")
+        t = _decision_tools(_show_decision, {
+            "/v1/systemone": _404, "/api/version": {"version": "0.34.4"}})
+        r = t["decide"](model="nimble", state="log", questions=_q)
+        check("a 404 from an Ollama older than 0.35.0 is endpoint_unavailable",
+              r.get("verdict") == "endpoint_unavailable"
+              and "0.35.0" in r.get("remedy", ""))
+        t = _decision_tools(None, {
+            "/v1/systemone": _404, "/api/version": {"version": "0.40.15"}})
+        r = t["decide"](model="no-such-model", state="log", questions=_q,
+                        allow_truncation=True)
+        check("a 404 for an unknown model on a new Ollama stays model_not_found",
+              r.get("verdict") == "model_not_found")
+
+        check("version 0.35.0 supports decide",
+              _decide_supported("0.35.0") == "yes")
+        check("version 0.34.4 does not", _decide_supported("0.34.4") == "no")
+        check("an unreadable version is unknown, not no",
+              _decide_supported(None) == "unknown"
+              and _decide_supported("dev") == "unknown")
+
+        sent.clear()
+
+        def _gen_capture(payload):
+            sent.update(payload)
+            return {"response": "", "thinking": "x" * 900,
+                    "done_reason": "length"}
+
+        t = _decision_tools(_show_text, {"/api/generate": _gen_capture})
+        r = t["generate"](model="gpt-oss:20b", prompt="x", think="low")
+        check("think is passed to Ollama and echoed back",
+              sent.get("think") == "low" and r.get("think") == "low")
+        check("an answer lost to thinking says so in the remedy",
+              r.get("verdict") == "empty_generation"
+              and r.get("thinking_chars") == 900
+              and "think" in r.get("remedy", ""))
+        sent.clear()
+        t = _decision_tools(_show_text, {"/api/generate": _gen_capture})
+        t["generate"](model="gpt-oss:20b", prompt="x")
+        check("think left unset is not sent, so the model's default holds",
+              "think" not in sent)
+
+        # The /api/show shape observed on Ollama 0.40.12 for gpt-oss:20b.
+        t = _decision_tools(dict(_show_text, thinking={
+            "values": ["low", "medium", "high"], "default": "medium"}), {})
+        r = t["show_model"](model="gpt-oss:20b")
+        check("show_model reports the think levels Ollama names",
+              r.get("think_levels") == ["low", "medium", "high"]
+              and r.get("think_default") == "medium")
+        t = _decision_tools(_show_text, {})
+        check("show_model reports no think levels when Ollama names none",
+              "think_levels" not in t["show_model"](model="gemma4:12b"))
+    finally:
+        globals()["_request"] = _saved_request_d
+
     print("Cloud-model labelling")
     # Realism is load-bearing here, but only for RESPONSE SHAPES -- invented
     # /api/show payloads agree with the code that reads them, and reality was
@@ -2103,8 +2684,13 @@ def selftest() -> int:
             # assertion. This one only confirms build() actually calls it.
             check("build stores the normalised key it was given",
                   paths == ["sub dir/note.md"])
+            # Compared RESOLVED, because build() records the resolved root.
+            # GitHub's Windows runners put TEMP under an 8.3 short name
+            # (C:\Users\RUNNER~1\...) that resolve() expands, so the unresolved
+            # form failed there and passed on every machine without one --
+            # red on windows-latest from 2026-09-26, the v1.0.0 tag included.
             check("the header records where it was built from",
-                  body["source_root"] == str(Path(tmp) / "corpus"))
+                  body["source_root"] == str((Path(tmp) / "corpus").resolve()))
             check("the header records the description it was given",
                   body["description"] == "an end-to-end fixture")
             check("counts in the header match the body",
@@ -2637,7 +3223,7 @@ def build_server() -> tuple[Any, Config]:
 
     # Opt-in, and the import is inside the branch on purpose: an unset
     # OLLAMA_MCP_INDEX_DIR means the retrieval module is never even loaded, so
-    # "the default clone exposes nine tools" is a fact about what runs rather
+    # "the default clone exposes ten tools" is a fact about what runs rather
     # than a promise about what is registered.
     if config.index_dir:
         import index_tools

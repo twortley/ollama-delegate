@@ -198,7 +198,7 @@ def walk_shallow(fn: ast.AST):
     Like `ast.walk`, but does NOT descend into nested `def`s or `class`es.
 
     Required for attribution to mean anything. With a full walk, `register()`
-    appears to raise every verdict in the server, because all nine tools are
+    appears to raise every verdict in the server, because all ten tools are
     nested inside it -- a table that is true of nobody.
     """
     stack = list(ast.iter_child_nodes(fn))
@@ -385,10 +385,10 @@ def collect_tools(tree: ast.Module, source: str = "ollama_server.py") -> list[di
     tools.sort(key=lambda t: t["name"])
     # Not a style check. These counts are asserted in three other documents, and
     # this is the only place that can notice when they stop being true. They are
-    # per-module now: the bridge is nine tools always registered, the retrieval
+    # per-module now: the bridge is ten tools always registered, the retrieval
     # module is four registered only when OLLAMA_MCP_INDEX_DIR is set, and a
     # single total would hide either one moving.
-    expected = {"ollama_server.py": 9, "index_tools.py": 4}.get(source)
+    expected = {"ollama_server.py": 10, "index_tools.py": 4}.get(source)
     if expected is not None and len(tools) != expected:
         print(f"note: {len(tools)} tools found in {source}; the record says "
               f"{expected}", file=sys.stderr)
