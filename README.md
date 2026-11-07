@@ -168,7 +168,7 @@ existed the whole time this was built and made none of it redundant.
 |---|---|---|
 | The open model | **is** the agent — does the work and judges it | is a tool the agent calls and reviews |
 | Granularity | a **mode** you switch into | a **per-call** decision, visibly recorded |
-| Surface | a chat endpoint | nine tools — including `embed`, `list_models`, `show_model` |
+| Surface | a chat endpoint | ten tools — including `embed`, `decide`, `list_models`, `show_model` |
 | Retrieval | not possible; no embeddings | `vault_index.py` and the `index_*` tools |
 
 **The reviewing step is the point.** Nearly everything worth knowing in this
@@ -270,6 +270,12 @@ anything the process is later handed. This is what stops a stray call evicting a
 Set `temperature: 0` and `json_mode: true` for extraction work; small local
 models are markedly less reliable at free-form structure than at filling a shape
 you have specified.
+
+**For labelling, yes/no checks and grading, a decision model may suit better.**
+With Ollama 0.35.0 or newer and a model whose capabilities include `decision`,
+`decide` returns a label, a probability of yes, or a grade on a scale — with the
+probabilities — instead of text to parse. See
+[manual §8.1](docs/MANUAL.md#81-decision-models).
 
 ## Security
 

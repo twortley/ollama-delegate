@@ -10,6 +10,47 @@ severity and release note. A release's notes on GitHub are this file's entry
 followed by that register, composed by `ci/release_notes.py`, so the two cannot
 disagree.
 
+## [1.1.0] - 2026-11-07
+
+Decision models, and a fix for the way v1.0.0 handled them.
+
+### Added
+
+- **`decide`**, a tenth tool, for Ollama's decision models (`/v1/systemone`,
+  Ollama 0.35.0 and newer). It asks typed questions about some content —
+  `choice` from a set of labels, `noul` for yes/no, `score` on ordered levels —
+  and returns probabilities instead of generated text. Every answer is checked
+  against the question asked: a label that was not offered, probabilities that
+  do not sum to one, or a question left unanswered is reported as
+  `bad_response` or `incomplete`, never as `ok`. On an Ollama too old for the
+  endpoint it says so (`endpoint_unavailable`) rather than reporting a missing
+  model.
+- **`think`** on `generate` and `chat`: `true`, `false`, or a level the model
+  names, which `show_model` now lists as `think_levels`. Left unset, the
+  model's default holds as before. Responses echo the level and report
+  `thinking_chars`, and an answer emptied by thinking says so in its remedy.
+- **`server_info` reports Ollama's own version**, and whether `decide` can work
+  on it (`decide_supported`: yes, no or unknown).
+- **The skill** covers `decide`: when to use it, how to phrase questions, and why
+  `confidence` is not accuracy.
+
+### Fixed
+
+- **A decision model run through `generate` or `chat` returned prose that read
+  like an answer.** `nimble` through `generate` returned *"Thinking Process:
+  1. Analyze the Request…"* and no probabilities. Both tools now refuse a model
+  whose capabilities name `decision` and not `completion`, with
+  `wrong_capability` and a remedy naming `decide`. A model that reports no
+  capabilities is not refused.
+- **The design specification showed a closed deviation as open.** As published
+  at 1.0.0, `docs/DESIGN.md` still listed `FS-05` as a deviation that its working
+  copy had closed in August. It is published from the working copy again.
+- **CI failed on Windows from its first run, so 1.0.0 has no GitHub release.**
+  A selftest check compared a path before and after resolving it; GitHub's
+  Windows runners use a short-name temp directory, so it failed there and
+  nowhere else, and the release job never ran. The check now compares resolved
+  paths. **This is the first release with a release page and the skill ZIP.**
+
 ## [1.0.0] - 2026-09-26
 
 First release.

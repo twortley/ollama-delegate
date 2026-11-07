@@ -50,7 +50,7 @@ during development and is not part of the published set.
 
 | Component | File | State |
 |---|---|---|
-| **Delegation server** | `ollama_server.py` | Shipped — nine tools, always registered |
+| **Delegation server** | `ollama_server.py` | Shipped — ten tools, always registered. `decide` added in 1.1.0 (§5.10) |
 | **Retrieval indexer** | `vault_index.py` | Shipped — `build`, `search`, `status` |
 | **Retrieval MCP tools** | `index_tools.py` | Shipped — four tools, **registered only when an index directory is configured**. See §11 |
 | **Delegation skill** | `skills/local-inference-delegation/SKILL.md` | Shipped |
@@ -59,8 +59,8 @@ during development and is not part of the published set.
 provides capability; the skill provides the judgement about when to use it.
 
 **The tool surface has two states.** Without an index directory configured the
-server registers nine tools and does not load the retrieval module; with one
-configured it registers thirteen. §11.2 specifies the condition.
+server registers ten tools and does not load the retrieval module; with one
+configured it registers fourteen. §11.2 specifies the condition.
 
 ## 2. Architecture
 
@@ -169,7 +169,7 @@ used.
 
 ## 3. Module structure — `ollama_server.py`
 
-**One file, ~1,730 lines, no package.** Sections in source order:
+**One file, ~3,200 lines — about half of them the selftest — no package.** Sections in source order:
 
 | Region | Contents |
 |---|---|
@@ -179,8 +179,11 @@ used.
 | **Enforcement** | `Refused`, `Guard`, `_base_name()` — the whole permission surface |
 | **Transport** | `_request()`, `_ok()`, `_refusal()` — the only HTTP call site |
 | Context budgeting | `_estimate_tokens()`, `ContextCache`, `_check_context()` |
-| Result shaping | `_throughput()`, `_apply_completion_verdict()`, `_human_size()` |
-| **Tool registration** | `register()` — the nine delegation tools as closures over `config`, `guard`, `ctx`. `build_server()` calls `index_tools.register()` for four more **only when an index directory is configured**, and imports that module inside the branch, so an unconfigured clone never loads it |
+| Capability routing | `_TOOL_FOR_CAPABILITY`, `_capability_refusal()` — §5.9 |
+| Decisions | `_question_problem()`, `_answer_problems()`, `_distribution_problems()` — §5.10 |
+| Ollama's version | `DECIDE_MIN_OLLAMA`, `_parse_version()`, `_ollama_version()`, `_decide_supported()` |
+| Result shaping | `_throughput()`, `_apply_completion_verdict()`, `_thinking_report()`, `_human_size()` |
+| **Tool registration** | `register()` — the ten delegation tools as closures over `config`, `guard`, `ctx`. `build_server()` calls `index_tools.register()` for four more **only when an index directory is configured**, and imports that module inside the branch, so an unconfigured clone never loads it |
 | Verification | `selftest()`, `probe()` |
 | Entry point | `build_server()`, `main()` |
 
@@ -266,23 +269,35 @@ otherwise collapse into one generic error:
 produce an empty 200. Without these checks both arrive as a successful call that
 returned nothing.
 
-> ### ⚠️ `generate` calls `/api/generate`, and `FS-05` requires `/api/chat`
+> ### `generate` posts to `/api/generate`, and that satisfies `FS-05`
 >
-> **As shipped, the `generate` tool posts to `/api/generate`**
-> (`ollama_server.py:897`). `chat` posts to `/api/chat` (line 994).
+> **As shipped, `generate()` posts `/api/generate`; `chat()` posts
+> `/api/chat`.** Named by function rather than by line number: the lines move,
+> and a stale line number in a specification was found here on 2026-08-30.
 >
-> `FS-05` reads: *"`generate` performs single-prompt completion via `/api/chat`,
-> never `/api/generate`."* **The code does not meet it.**
+> **Why this looks alarming and is not.** `/api/generate` is documented as
+> bypassing the model's chat template, and a bypassed template makes
+> template-sensitive families emit reserved vocabulary — Gemma emits
+> `<unused50>` — instead of text. `vault_index.py` carries a comment naming that
+> failure, because it bit this project once.
 >
-> `/api/generate` bypasses the model's chat template. Template-sensitive
-> families then emit reserved vocabulary — Gemma emits `<unused50>` — instead of
-> text. `vault_index.py:365` carries the fix and a comment naming the failure;
-> `ollama_server.py` does not.
+> **Measured 2026-08-30, and the template is applied on both endpoints.** Four
+> independent paths — `generate` and `chat` through the tool surface, and both
+> endpoints by direct HTTP — returned byte-identical text at temperature 0 with
+> **`prompt_eval_count` of 26 on every one.** A chat template adds turn markers,
+> and turn markers are tokens; identical prompt tokenisation means no template
+> was skipped. Two Gemma-family models, Ollama 0.33.2.
 >
-> **This is stated because the DS documents as-shipped.** It is recorded as a
-> defect in `VERIFICATION.md`, not corrected here. **It has not been reproduced
-> against a live host** — the prediction is that `generate` with a Gemma-family
-> model returns reserved tokens, and that is the falsifier.
+> **`FS-05` is worded behaviourally for exactly this reason** — it requires the
+> template to be applied, not a particular URL to be called — so this
+> implementation satisfies it, and the check survives a change of endpoint or a
+> change in Ollama. See §14.2 for the requirement's history.
+>
+> **What remains is a robustness question, not a compliance one.** The current
+> behaviour depends on Ollama continuing to apply the template on
+> `/api/generate`, which is neither guaranteed nor ours to control. Moving
+> `generate` to `/api/chat` would remove that dependency. That is an engineering
+> decision and is tracked as one.
 
 ### 5.3 Enforcement — one function
 
@@ -383,7 +398,9 @@ every oversized index rather than reporting a count.
 ### 5.6 The context cache
 
 `ContextCache.limit_for(model)` fetches `/api/show` once per model per process
-and returns `{"limit", "source", "disagreement"}`.
+and returns `{"limit", "source", "disagreement", "capabilities"}`. The
+capabilities ride on the same call, so the routing check in §5.9 costs nothing
+extra; `None` means *not read*, exactly as it does for `limit`.
 
 Two sources can disagree: the architecture's `*.context_length` in `model_info`,
 and `num_ctx` parsed out of the `parameters` text block. **The lower value is
@@ -413,6 +430,11 @@ depend on that heuristic — missing metadata is sufficient on its own.
 
 `generate` and `chat` share this function, so they cannot drift apart.
 
+**An empty answer after thinking gets its own remedy.** When the response carried
+reasoning (`thinking_chars` is set, §5.11) and no answer, the remedy says the
+budget went on thinking and names `max_tokens` and `think` — a different problem
+from a model that said nothing, with a different fix.
+
 ### 5.8 Throughput reporting — `FS-15`
 
 `_throughput()` extracts, when Ollama reports them: `eval_count`,
@@ -423,6 +445,87 @@ which distinguishes a genuine model load from a warm call.
 **Load time is reported separately from generation rate** because a cold load
 dominates a short generation and would otherwise make a fast model look slow.
 
+### 5.9 Capability routing — `FS-32`
+
+**A tool refuses a model whose reported capabilities belong to another tool.**
+`generate` and `chat` need `completion`; `decide` needs `decision`. The refusal is
+`wrong_capability`, made **before any model call**, and its remedy names the tool
+that serves the model.
+
+**Why it exists.** `/api/generate` does not refuse a decision model; it runs it as
+a text model. On 2026-11-07 `nimble` through 1.0.0's `generate` returned *"Thinking
+Process: 1. **Analyze the Request:**"* and hit the token limit — prose that reads
+like an answer, without the probabilities that are the reason to use one (`D-21`).
+
+**It fires only on positive evidence.** The capability list must have been read,
+be non-empty, lack what the tool needs, and name something another tool serves.
+**An unreported capability is not evidence of absence**: an Ollama too old to
+report capabilities would otherwise have every model refused.
+
+### 5.10 Decisions — `decide`, `FS-31`
+
+`decide(model, state, questions)` posts to **`/v1/systemone`** (Ollama 0.35.0 and
+newer). Each question is `choice` (labels with meanings), `noul` (yes/no) or
+`score` (ordered levels); all see the same `state` and none sees another's answer.
+
+**A separate tool, not a mode on `generate`.** The contract differs in both
+directions — state and typed questions in, probabilities out — and folding it
+into `generate` would give one tool two return shapes and make `generate`'s
+completion verdicts (§5.7) meaningless for half its calls.
+
+**Questions are checked for shape, not for limits.** An empty map, an unknown
+type, a choice with fewer than two labels, a score whose levels are not an
+ordered list, or a question without instructions is refused before the call.
+**Upper limits are left to Ollama**, which reports its own: a limit copied from a
+release note into this file would go stale with nothing to say so. The one-label
+floor is not a copy of a limit — **Ollama 0.40.12 accepts a one-label choice and
+answers it with `confidence: 1.0`** (probe, 2026-11-07): a forced answer reported
+with full confidence, which is the non-answer rule's shape.
+
+**Every answer is checked against its question** (`_answer_problems()`):
+
+| Found | Verdict |
+|---|---|
+| A question with no answer, and nothing else wrong | `incomplete` |
+| A choice outside the labels offered; probabilities that are not over exactly those labels, fall outside [0, 1], or do not sum to 1 ± 0.02; a `noul` outside [0, 1]; a `score` outside 0 … n−1 | `bad_response` |
+
+**Typed output guarantees an interface, not that it was honoured.** A mismatched
+answer is a non-answer, so none of that call's answers is passed off as decided.
+
+**`confidence` is passed through as Ollama reports it, not rescaled.** It measures
+how concentrated a distribution is, and backends define it differently; mapping
+it onto another scale would manufacture a comparability nobody has measured.
+The tool description says it is not the probability of being right.
+
+**A 404 has two meanings here.** `_request()` reports any 404 as
+`model_not_found`. From `/v1/systemone` it can also mean the endpoint does not
+exist, so `decide` asks `/api/version`: an Ollama older than 0.35.0, or a model
+whose `/api/show` succeeded, gives **`endpoint_unavailable`** with the upgrade as
+its remedy. Otherwise the 404 stands as `model_not_found`.
+
+**The context check runs** with 5 % headroom — a decision emits almost no tokens —
+over the state and the serialised questions.
+
+### 5.11 Thinking level — `FS-33`
+
+`generate` and `chat` take `think`: `true`, `false`, or a level the model names.
+**It is sent only when given**, so an unset value keeps the model's default and
+1.0.0 behaviour. The response echoes it and reports `thinking_chars`, the length
+of any reasoning Ollama returned. **The reasoning text itself is not returned** —
+it can be many times the answer's size, and the caller asked for the answer.
+
+**Values are not validated here.** Ollama rejects a level a model does not
+support and the rejection reaches the caller verbatim as `ollama_error`; a list
+of levels kept in this file would be a second, staler copy of what `/api/show`
+already reports.
+
+### 5.12 Ollama's own version — `FS-04`
+
+`server_info` asks `/api/version` with a five-second timeout and reports
+`ollama_version` and `decide_supported` — **`yes`, `no` or `unknown`**, because a
+version that could not be read is not a version that is too old. An unreachable
+host is reported as `unavailable (<verdict>)`, never as a version.
+
 ---
 
 ## 6. Interfaces — MCP tool surface
@@ -432,19 +535,31 @@ reaches the client**, and there is no success channel other than `verdict`.
 
 <!-- BEGIN GENERATED: tools -->
 
-**13 tools, registered in a single `register()`.** Every one returns a dict carrying a `verdict`; there is no other success channel and no exception reaches the client.
+**14 tools, registered in a single `register()`.** Every one returns a dict carrying a `verdict`; there is no other success channel and no exception reaches the client.
 
 #### `chat`
 
 Multi-turn conversation, preserving history.
 
 ```python
-chat(model: str, messages: list[dict[str, str]], temperature: float | None = None, max_tokens: int | None = None, json_mode: bool = False, allow_truncation: bool = False) -> dict[str, Any]
+chat(model: str, messages: list[dict[str, str]], temperature: float | None = None, max_tokens: int | None = None, json_mode: bool = False, allow_truncation: bool = False, think: bool | str | None = None) -> dict[str, Any]
 ```
 
-**Returns on success:** `model`, `location`, `role`, `content`, `duration_s`, `done_reason`, throughput fields, when Ollama reports them
+**Returns on success:** `model`, `location`, `role`, `content`, `duration_s`, `done_reason`, throughput fields, when Ollama reports them, `**_thinking_report(think, message.get('thinking'))`
 
-**Verdicts reachable:** `bad_response`, `completion_unverified`, `context_exceeded`, `context_unknown`, `empty_generation`, `empty_response`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`, `truncated`
+**Verdicts reachable:** `bad_response`, `completion_unverified`, `context_exceeded`, `context_unknown`, `empty_generation`, `empty_response`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`, `truncated`, `wrong_capability`
+
+#### `decide`
+
+Ask a local DECISION model typed questions about some content, and get probabilities back instead of generated text. For labelling, yes/no checks and grading in bulk, where a label parsed out of prose would otherwise have to be trusted.
+
+```python
+decide(model: str, state: str, questions: dict[str, dict[str, Any]], allow_truncation: bool = False) -> dict[str, Any]
+```
+
+**Returns on success:** `model`, `location`, `answers`, `usage`, `duration_s`
+
+**Verdicts reachable:** `bad_response`, `context_exceeded`, `context_unknown`, `empty_response`, `endpoint_unavailable`, `incomplete`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`, `wrong_capability`
 
 #### `delete_model`
 
@@ -475,12 +590,12 @@ embed(model: str, texts: list[str], allow_truncation: bool = False) -> dict[str,
 Single-turn completion. The delegation workhorse.
 
 ```python
-generate(model: str, prompt: str, system: str = '', temperature: float | None = None, max_tokens: int | None = None, json_mode: bool = False, allow_truncation: bool = False) -> dict[str, Any]
+generate(model: str, prompt: str, system: str = '', temperature: float | None = None, max_tokens: int | None = None, json_mode: bool = False, allow_truncation: bool = False, think: bool | str | None = None) -> dict[str, Any]
 ```
 
-**Returns on success:** `model`, `location`, `response`, `duration_s`, `done_reason`, throughput fields, when Ollama reports them
+**Returns on success:** `model`, `location`, `response`, `duration_s`, `done_reason`, throughput fields, when Ollama reports them, `**_thinking_report(think, raw.get('thinking'))`
 
-**Verdicts reachable:** `bad_response`, `completion_unverified`, `context_exceeded`, `context_unknown`, `empty_generation`, `empty_response`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`, `truncated`
+**Verdicts reachable:** `bad_response`, `completion_unverified`, `context_exceeded`, `context_unknown`, `empty_generation`, `empty_response`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`, `truncated`, `wrong_capability`
 
 #### `list_models`
 
@@ -526,9 +641,9 @@ Report what this MCP server is configured to do and what it refuses.
 server_info() -> dict[str, Any]
 ```
 
-**Returns on success:** `version`, `host`, `write_operations`, `write_gates`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `log_level`, `retrieval_tools`, `note`
+**Returns on success:** `version`, `host`, `ollama_version`, `decide_supported`, `write_operations`, `write_gates`, `model_allowlist`, `timeout_s`, `pull_timeout_s`, `log_level`, `retrieval_tools`, `note`
 
-**Verdicts reachable:** `ok`
+**Verdicts reachable:** `bad_response`, `empty_response`, `model_not_found`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`
 
 #### `show_model`
 
@@ -538,7 +653,7 @@ Show a model's capabilities, context length and parameters.
 show_model(model: str) -> dict[str, Any]
 ```
 
-**Returns on success:** `model`, `location`, `capabilities`, `context_length`, `details`, `parameters`, `template_present`
+**Returns on success:** `model`, `location`, `capabilities`, `context_length`, `details`, `parameters`, `template_present`, `**levels`
 
 **Verdicts reachable:** `bad_response`, `empty_response`, `invalid_request`, `model_not_found`, `not_permitted`, `ok`, `ollama_error`, `ollama_unreachable`, `timeout`
 
@@ -604,26 +719,28 @@ cause) and, where one exists, `remedy` (what to do about it).
 
 <!-- BEGIN GENERATED: verdicts -->
 
-**16 verdicts, one vocabulary.** A caller branches on `verdict` and never on the presence or absence of a field. `ok` is the only success value; every other value names a specific failure, and *“the check did not happen”* is spelled differently from *“the check passed”*.
+**18 verdicts, one vocabulary.** A caller branches on `verdict` and never on the presence or absence of a field. `ok` is the only success value; every other value names a specific failure, and *“the check did not happen”* is spelled differently from *“the check passed”*.
 
 | Verdict | Raised in |
 |---|---|
-| `bad_response` | `_request` |
+| `bad_response` | `_request`, `decide` |
 | `completion_unverified` | `_apply_completion_verdict` |
 | `context_exceeded` | `_check_context`, `embed` |
 | `context_unknown` | `_check_context` |
 | `empty_generation` | `_apply_completion_verdict` |
 | `empty_response` | `_request` |
-| `incomplete` | `embed`, `pull_model` |
-| `invalid_request` | `Guard.check`, `chat`, `embed`, `generate` |
+| `endpoint_unavailable` | `decide` |
+| `incomplete` | `decide`, `embed`, `pull_model` |
+| `invalid_request` | `Guard.check`, `chat`, `decide`, `embed`, `generate` |
 | `model_not_found` | `_request` |
 | `no_models_installed` | `list_models` |
 | `not_permitted` | `Guard.check` |
-| `ok` | `_ok`, `chat`, `delete_model`, `embed`, `generate`, `list_models`, `list_running`, `pull_model`, `server_info`, `show_model` |
+| `ok` | `_ok`, `chat`, `decide`, `delete_model`, `embed`, `generate`, `list_models`, `list_running`, `pull_model`, `server_info`, `show_model` |
 | `ollama_error` | `_request` |
 | `ollama_unreachable` | `_request` |
 | `timeout` | `_request` |
 | `truncated` | `_apply_completion_verdict` |
+| `wrong_capability` | `_capability_refusal` |
 
 <!-- END GENERATED: verdicts -->
 
@@ -1026,7 +1143,7 @@ No `index_*` tool accepts a filesystem path.
 
 | Job | Consequence |
 |---|---|
-| **Opt-in** | Unset, the tools are not registered *and the module is never imported* — the import sits inside the branch in `build_server()`. A default clone exposes exactly the nine-tool bridge |
+| **Opt-in** | Unset, the tools are not registered *and the module is never imported* — the import sits inside the branch in `build_server()`. A default clone exposes exactly the ten-tool bridge |
 | **Allowlist** | Only indexes in that directory are reachable |
 | **Location** | Resolves *"where does the index live"*, which the CLI left relative to a working directory an MCP client chooses |
 
@@ -1207,16 +1324,23 @@ delegation at all.
 ## 14. Known deviations
 
 **Four were found by tracing this document against `URS_FS` and against the
-source. Two are now closed.** A design specification records what shipped, so a
+source. Three are now closed.** A design specification records what shipped, so a
 resolved deviation is marked rather than removed — a hole that silently
 disappears leaves no evidence the trace matrix ever worked.
 
 | # | Deviation | Kind | State |
 |---|---|---|---|
-| 14.1 | `FS-19` — `status` specified, not implemented | Unbuilt function | ✅ **Closed 2026-08-30** |
-| 14.2 | `FS-05` — `generate` uses `/api/generate`, not `/api/chat` | **Code contradicts the FS** | Open |
+| 14.1 | `FS-19` — `status` specified, not implemented | Unbuilt function | ✅ **Closed 2026-08-30** — implemented |
+| 14.2 | `FS-05` — `generate` uses `/api/generate`, not `/api/chat` | **The requirement was over-specified** | ✅ **Closed 2026-08-30** — behaviour verified, `FS-05` reworded |
 | 14.3 | `UR-08` — no second-backend seam | Stated non-goal | Open, by decision |
 | 14.4 | No declared Python version floor | Undeclared constraint | ✅ **Closed 2026-08-30** — 3.10 declared and enforced; untested span named |
+
+> **Two of the three closed because a document was wrong, not because code
+> changed.** `14.2`'s requirement named a mechanism where a behaviour belonged;
+> `14.4`'s floor was never declared anywhere. **The trace matrix found both** —
+> which is what it is for. A deviation is as often a defect in the specification
+> as in the implementation, and a matrix that only ever indicts the code is not
+> being read honestly.
 
 ### 14.1 `FS-19` — `status`: ✅ CLOSED 2026-08-30
 
@@ -1235,12 +1359,42 @@ met; see §9.10.
 implementation convenience:** re-hashing opens every source file, and the rule
 in §11 is that anything touching the corpus is a CLI operation.
 
-### 14.2 `FS-05` — `generate` uses `/api/generate`
+### 14.2 `FS-05` — ✅ CLOSED 2026-08-30. The requirement was over-specified
 
-See §5.2. **The requirement says `/api/chat`, never `/api/generate`; the code
-uses `/api/generate`.** Predicted symptom: template-sensitive model families
-return reserved vocabulary instead of text. **Not reproduced against a live
-host.**
+**It read:** *"`generate` performs single-prompt completion via `/api/chat`,
+never `/api/generate`."* The code posts `/api/generate`, so this stood as a
+deviation.
+
+**Tested, and the behaviour is correct.** Four independent paths — `generate`
+and `chat` through the tool surface, and both endpoints by direct HTTP — returned
+byte-identical text at temperature 0, with **`prompt_eval_count` of 26 on every
+one.** A chat template adds turn markers, and turn markers are tokens: identical
+prompt tokenisation means **the template is applied on both endpoints**. Two
+Gemma-family models, Ollama 0.33.2. The reserved-vocabulary symptom does not
+occur.
+
+**The requirement, not the code, was wrong.** `FS-05` named an *endpoint* where
+it should have named a *behaviour*. The endpoint was the mechanism chosen to get
+the template applied; the requirement was always that it gets applied.
+`FS-05` is now worded behaviourally and `generate` satisfies it.
+
+> **The cost of that confusion was a full verification cycle**, in which a test
+> returning exactly its stated expected outcome was graded a failure because the
+> implementation differed from the spec's prescription. **An FS says what must be
+> true; how it is achieved belongs here, in the DS.** Naming the mechanism in the
+> FS converts every future implementation change into a deviation for no gain in
+> safety.
+
+**Nothing was weakened.** The new wording is more testable: the
+`prompt_eval_count` comparison detects a skipped template **whatever endpoint is
+used and whatever Ollama does next**, where the old wording only checked that a
+particular URL was called. The `<unused50>` history remains in §5.2 as the reason
+the behaviour matters.
+
+**Still open as engineering, not as compliance:** moving `generate` to
+`/api/chat` would remove a dependency on Ollama continuing to apply the template
+on `/api/generate` — behaviour this project neither controls nor is guaranteed.
+That is a robustness decision, and it is tracked as one.
 
 ### 14.3 `UR-08` — no second-backend seam
 
@@ -1273,7 +1427,7 @@ and says so.
 | Version | Environment | Evidence | Grade |
 |---|---|---|---|
 | **3.10.12** | `ENV-4` | `--selftest` and `mutation_check.py` throughout the retrieval work, **current code**, 2026-08-30 | **Unit and static.** `ENV-4` reaches no Ollama endpoint, so no live model and no MCP client |
-| **3.11** | — | None | **Untested, by decision** |
+| **3.11.15** | `ENV-4` | `--selftest` (176 checks) and `mutation_check.py` (32/32), **current code**, 2026-09-11 | **Unit and static**, and *incidental*: the sandbox that ran the coverage work carried 3.11.15. It was not a deliberate matrix run, and the row says so rather than implying a tested matrix |
 | **3.12.3** | `ENV-2` | Install → `--selftest` → `--probe` → full tool exercise through a desktop MCP client, 2026-08-29 | End to end, **on code that predates the retrieval tools** |
 | **3.13** | `ENV-8` | CI on every push from 1.0.0: `--selftest` on Ubuntu and Windows, and a stdio handshake with the SDK's own client on MCP SDK 1.x and 2.x | **Unit and handshake.** No Ollama reachable, so no model |
 | **3.13.15** | `ENV-7` | Clone of the published repository → install from the README → `--selftest` → `--probe` → Claude Desktop and Google Antigravity through inference, refusal, skill triggering and the retrieval CLI, 2026-09-24/25, build `4066f75` | **End to end, on current code**, on a host with no prior copy |
@@ -1315,7 +1469,7 @@ nobody notices.
 | FS-02 | `show_model` | §6 | ✅ |
 | FS-03 | `list_running` | §6 | ✅ |
 | FS-04 | `server_info` | §6 | ✅ |
-| FS-05 | `generate` | §6, **§5.2** | ⚠️ **Deviation — §14.2** |
+| FS-05 | `generate`, chat template applied | §6, §5.2, §14.2 | ✅ |
 | FS-06 | `chat`, history budgeting | §6, §5.5 | ✅ |
 | FS-07 | `embed`, count assertion | §6, §5.5 | ✅ |
 | FS-08 | `pull_model`, gated | §6, §5.3 | ✅ |
@@ -1341,8 +1495,11 @@ nobody notices.
 | FS-28 | `--selftest` | §12 | ✅ |
 | FS-29 | `--probe` | §12 | ✅ |
 | FS-30 | The skill ships with the server | §13 | ✅ |
+| FS-31 | `decide` — questions checked, answers checked | §5.10, §6 | ✅ |
+| FS-32 | Capability routing, before the call | §5.9 | ✅ |
+| FS-33 | `think` sent only when given; reasoning size reported | §5.11, §5.7 | ✅ |
 
-**29 documented as shipped · 1 shipped with a deviation · 0 not built.**
+**33 documented as shipped · 0 with an open deviation · 0 not built.** `FS-31` … `FS-33` added for 1.1.0.
 
 Was *"24 shipped · 1 deviation · 5 not built"* until 2026-08-30. **`FS-19` and
 `FS-21` … `FS-25` all closed on the same day**, which is the largest single

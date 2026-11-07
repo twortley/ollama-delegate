@@ -104,7 +104,7 @@ criterion that names no environment capable of running it is not a criterion.
 
 | ID                   | Specification                                                                                                                                                                                                                                                                                                       | Covers                                                                                                                                                                                         |
 | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **ENV-1** (`A001`)   | Windows 11 Pro 25H2 · Ollama 0.33.2 · **Python 3.14.4** · Claude Desktop                                                                                                                                                                                                                                            | The main development machine and test bed. Most verification was executed here                                                                                                                 |
+| **ENV-1** (`A001`)   | Windows 11 Pro 25H2 · Ollama 0.33.2 for the 1.0.0 runs, **0.40.12** for 1.1.0 · **Python 3.14.4** · Claude Desktop                                                                                                                                                                                                                                            | The main development machine and test bed. Most verification was executed here                                                                                                                 |
 | **ENV-2** (`A005`)   | Ubuntu 24.04.4 · Ollama 0.30.6 · **Python 3.12.3** · Claude Desktop                                                                                                                                                                                                                                                 | Verification against a clean Ubuntu target                                                                                                                                                     |
 | **ENV-3** (`A001`)   | **A second MCP client — a non-Claude agentic IDE**, on the same Windows host and Ollama instance as `ENV-1`                                                                                                                                                                                                         | Tool enumeration and response handling outside Claude Desktop                                                                                                                                  |
 | **ENV-4** (no asset) | Unit-test environment · Linux container · **Python 3.10.12** · **no Ollama reachable** · no MCP client                                                                                                                                                                                                              | **The declared floor interpreter.** Unit and static verification: `--selftest`, `mutation_check.py`, source inspection                                                                         |
@@ -288,6 +288,7 @@ criterion that names no environment capable of running it is not a criterion.
 | **UR-23** | A caller **shall be able to** determine when delegation is appropriate, from guidance supplied with the system                                                                   | M   | **H** | A caller routes correctly **in both directions** — delegating bulk mechanical work and declining judgement work — across four cases, from the guidance the system supplies. ⚠️ **Criterion restated 2026-09-12**, after the previous one (*a difference in delegation rate against a control without the guidance*) proved unmeasurable: the tool descriptions are themselves guidance supplied with the system, so no control can be deprived of them without testing a product that is not shipped                                                                                                                                                                                                                                                                                                                     | T   | ⚠️      |
 
 | **UR-33** | The caller **shall be able to** determine what a completed call cost, in generated tokens, throughput and model load time | D | L | Every inference response carries `eval_count` and `tokens_per_second` when Ollama reports them, and reports model load time **separately** from generation rate so a cold load does not read as a slow model | I | ✅ |
+| **UR-34** | A caller **shall be able to** obtain a label from a set, a yes/no or a grade as **probabilities** from a local decision model, and rely on every answer it is given matching the question it asked | D | M | On a live decision model, one call carrying a `choice`, a `noul` and a `score` question returns `ok` with an answer to each, inside the options asked. **An answer outside the question — a label not offered, a distribution that does not sum to one, a question left unanswered — is never `ok`.** Added 2026-11-07 for 1.1.0, after a decision model sent through `generate` returned prose with no probabilities (`VT-063`). **Met 2026-11-07:** `VT-066` through a live client, `VT-067` on 232 calls across two labelled cases | T | ✅ |
 
 ### 4.5 PER-5 — the evaluating reader
 
@@ -350,7 +351,7 @@ Each function names the `UR` it exists to satisfy.
 | **FS-01** | `list_models` returns every installed model with `location`, size, family and quantisation | UR-21, UR-04 |
 | **FS-02** | `show_model` returns capabilities, context length, parameters and `location` | UR-21 |
 | **FS-03** | `list_running` returns currently loaded models | UR-21 |
-| **FS-04** | `server_info` returns the effective configuration, including base URL and permission state | UR-03, UR-04 |
+| **FS-04** | `server_info` returns the effective configuration, including base URL and permission state, and the Ollama server's own version with whether `decide` can run on it | UR-03, UR-04, UR-34 |
 
 ### 5.2 Inference
 
@@ -417,6 +418,14 @@ Each function names the `UR` it exists to satisfy.
 | ID | Function | Satisfies |
 |---|---|---|
 | **FS-30** | The `local-inference-delegation` skill supplies routing judgement and ships with the server | UR-23 |
+
+### 5.9a Decisions and capability routing — 1.1.0
+
+| ID | Function | Satisfies |
+|---|---|---|
+| **FS-31** | `decide` sends `choice`, `noul` and `score` questions to a decision model through `/v1/systemone`, refuses a malformed question before the call, and checks every answer against the question asked | UR-34, UR-18 |
+| **FS-32** | A tool refuses a model whose reported capabilities belong to another tool, before any model call, naming that tool. A model that reports no capabilities is not refused | UR-18, UR-21 |
+| **FS-33** | `generate` and `chat` send a `think` level only when one is given, echo it, and report how much reasoning came back, so an answer emptied by thinking is told apart from one the model never gave | UR-18 |
 
 ### 5.10 Documentation deliverables
 
@@ -494,10 +503,10 @@ Each function names the `UR` it exists to satisfy.
 | UR-15 | FS-25 |
 | UR-16 | FS-19, FS-20, FS-22, FS-24 |
 | UR-17 | FS-21 |
-| UR-18 | FS-05, FS-06, FS-11, FS-14 |
+| UR-18 | FS-05, FS-06, FS-11, FS-14, FS-31, FS-32, FS-33 |
 | UR-19 | FS-12 |
 | UR-20 | FS-06, FS-07, FS-08, FS-09, FS-10, FS-13 |
-| UR-21 | FS-01, FS-02, FS-03 |
+| UR-21 | FS-01, FS-02, FS-03, FS-32 |
 | UR-22 | FS-23, FS-24 |
 | UR-23 | FS-30 |
 | UR-24 | DOC-01 |
@@ -510,6 +519,7 @@ Each function names the `UR` it exists to satisfy.
 | UR-31 | DOC-02 |
 | UR-32 | **DOC-07** |
 | UR-33 | **FS-15** |
+| UR-34 | FS-04, FS-31 |
 
 **Backward — every `FS` reaches a `UR`.** Verified in both directions; no
 function is unparented and no requirement is unsatisfied.

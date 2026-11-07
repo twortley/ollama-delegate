@@ -80,7 +80,7 @@ everywhere it appears.
 
 ## 2. Before you start
 
-**Five things. Each has one command that proves you have it** — find out now,
+**Five things, and one optional. Each has one command that proves you have it** — find out now,
 not halfway through a stack trace.
 
 | You need | Prove it | If it is missing |
@@ -90,6 +90,7 @@ not halfway through a stack trace.
 | **Ollama, running** | `ollama list` | ollama.com. A table means the daemon is up; an error means fix that first |
 | **An embedding model** | `ollama list` shows it, e.g. `nomic-embed-text` | `ollama pull nomic-embed-text` — needed for semantic search (section 9) |
 | **A reasoning model that fits your machine** | it answers a prompt inside your client's timeout | `ollama pull` one sized for your hardware — needed for `generate`, `chat` and reranking |
+| *Optional:* **a decision model**, on **Ollama 0.35.0 or newer** | `ollama --version`, and `ollama show <model>` lists `decision` under Capabilities | Needed only for `decide` (section 8.1) |
 
 **`pip` does not enforce the Python floor.** There is no `requires-python`. The
 server checks the version itself at startup and refuses by name — but only once
@@ -137,7 +138,7 @@ python3 -m venv .venv
 .venv/bin/python ollama_server.py --probe
 ```
 
-**To install a specific release**, add `--branch v1.0.0` (or the tag you want) to
+**To install a specific release**, add `--branch v1.1.0` (or the tag you want) to
 the clone. `ollama_server.py --version` prints the release a checkout belongs to.
 
 **Create the venv with `python3`; use it with `python`.** On macOS and Linux
@@ -412,17 +413,17 @@ Run these in order. Each proves something the one before it cannot.
 | 2 | `--probe` (section 3.2) | `Reachable`, models listed and labelled | The server can reach your Ollama |
 | 3 | Look at the client's server list | `ollama-delegate` connected, with its tools | The client launched it with your paths |
 | 4 | Ask the agent to call `list_models` | Your models, each with a `location` | A call goes client → server → Ollama and back |
-| 5 | Ask the agent to call `server_info` | The `version`, and what the server permits and refuses — write gates, allowlist, timeouts, retrieval | The release and the configuration you set are the ones running |
+| 5 | Ask the agent to call `server_info` | The `version`, Ollama's own `ollama_version`, and what the server permits and refuses — write gates, allowlist, timeouts, retrieval | The release and the configuration you set are the ones running |
 | 6 | Ask for one small delegated job, naming a **local** model from step 4 | An answer, and a response whose `location` is `local` | End to end, with content staying on the machine |
 
 **The tool count in step 3 depends on semantic search:**
 
 | `OLLAMA_MCP_INDEX_DIR` | Tools |
 |---|---|
-| unset | **9** |
-| set to a directory | **13** — the nine plus four `index_*` tools |
+| unset | **10** |
+| set to a directory | **14** — the ten plus four `index_*` tools |
 
-**If you set the variable and see 9, it did not reach the server** — it is in
+**If you set the variable and see 10, it did not reach the server** — it is in
 your shell, not the client's config (section 4).
 
 **Use a model name from step 4, not one you remember.** Model names are
@@ -500,7 +501,7 @@ sent to them leaves this machine.**
 
 **Both are permitted.** A hosted frontier model is sometimes the right call. What
 this server guarantees is that the choice is **visible**: every model in
-`list_models`, every `show_model`, every `generate`, `chat` and `embed` response,
+`list_models`, every `show_model`, every `generate`, `chat`, `embed` and `decide` response,
 and `--probe` carries a `location`:
 
 | `location` | Meaning |
@@ -514,6 +515,33 @@ is no setting that says *"never use cloud unless I ask"*. An agent that finds a
 local model too slow can move a task to a cloud model on its own judgement, and
 has (section 5). **To keep content on the machine, use `OLLAMA_MCP_MODELS` to
 allow only local models.** See [Known issues](#13-known-issues).
+
+### 8.1 Decision models
+
+Ollama 0.35.0 added **decision models**: models that return a choice, a
+probability or a grade instead of text. They report `decision` under their
+capabilities, and **`generate` and `chat` refuse them** — Ollama would run one as
+a text model and hand back prose that looks like an answer and carries none of
+the probabilities. Use **`decide`**.
+
+A `decide` call carries the content (`state`) and one or more questions, each one
+of three kinds:
+
+| Kind | Asks | Returns |
+|---|---|---|
+| `choice` | Which of these labels fits? `criteria` maps each label to what it means | `choice`, a probability per label, and `confidence` |
+| `noul` | Is this true? | `noul`, the probability of yes |
+| `score` | Where on this scale? `criteria` lists the levels, lowest first | `score`, a probability-weighted position on the levels |
+
+**Every answer is checked against its question.** A label that was not offered,
+probabilities that do not sum to one, a grade off the scale, or a question left
+unanswered comes back as `bad_response` or `incomplete`, never as `ok`.
+
+**`confidence` measures how concentrated the distribution is, not how likely the
+answer is to be right.** Before relying on a threshold, run a set of items whose
+answers you already know and see where the wrong ones fall.
+
+Each response carries `location`, as every other tool's does.
 
 ---
 
@@ -645,11 +673,13 @@ trace.
 | Server refuses at startup naming a Python version | Python older than 3.10; `pip` did not stop you | Install 3.10+, recreate the venv |
 | `--probe` cannot reach Ollama | The daemon is not running, or `OLLAMA_HOST` is wrong | `ollama list` should print a table; check the URL |
 | Server does not appear in the client, or shows disconnected | A relative path, single backslashes on Windows, or the client was not restarted | Absolute paths; `\\` on Windows; restart the client |
-| **9 tools where you expected 13** | `OLLAMA_MCP_INDEX_DIR` is in your shell, not the client's `env` — or it is empty | Put it in the config block, pointing at a directory; restart |
+| **10 tools where you expected 14** | `OLLAMA_MCP_INDEX_DIR` is in your shell, not the client's `env` — or it is empty | Put it in the config block, pointing at a directory; restart |
 | Every call returns 404 / `model_not_found` | A model name guessed or remembered from another machine | Call `list_models` first and use a name from it |
 | First call times out; the next one works | Cold load: the model was not in memory | Call again once warm. Models are evicted after about five minutes idle, so bursty use is cheaper than occasional use |
 | Every call to one model times out | The model is too large for the machine | Choose a smaller model; `show_model` and `--probe` sizes help |
-| Empty or cut-off output | The model ran out of output budget — common with reasoning models, which spend it thinking. The server reports this as a failure (`empty_generation`, truncated), never as an answer | Raise `max_tokens` on that `generate` or `chat` call |
+| Empty or cut-off output | The model ran out of output budget — common with reasoning models, which spend it thinking. The server reports this as a failure (`empty_generation`, truncated), never as an answer; `thinking_chars` shows how much went on reasoning | Raise `max_tokens` on that `generate` or `chat` call, or pass `think=false` (or a lower level) when the task does not need it |
+| `wrong_capability` | A decision model sent to `generate` or `chat`, or a text model sent to `decide` | Use the tool the remedy names, or pick a model whose capabilities fit (`list_models` with `include_details=true`) |
+| `endpoint_unavailable` from `decide` | Ollama is older than 0.35.0 | Upgrade Ollama; `server_info` shows the version it found |
 | `context_exceeded` | Input longer than the model's context. Ollama would silently truncate and return a valid-looking result; the server refuses instead | Chunk the input, or pass `allow_truncation=true` to accept the loss knowingly |
 | `not_permitted` from `pull_model` or `delete_model` | The write gates are off by default | Set `OLLAMA_MCP_ALLOW_PULL` / `_DELETE` in the client's `env` (section 7.1) |
 | The skill never triggers | Server registered under a key other than `ollama-delegate` | Rename the key; restart the client |

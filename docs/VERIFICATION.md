@@ -4,10 +4,10 @@ title: Verification Report — ollama-delegate
 purpose: What was verified, how, on which environment and build, with what limits, and every known defect with its severity, release decision and release note. DOC-04. Rendered from the verification register; never hand-edited.
 doc_type: verification
 status: canon
-doc_revision: 2
+doc_revision: 3
 created: 2026-09-12
-last_updated: 2026-09-26
-release: 1.0.0
+last_updated: 2026-11-07
+release: 1.1.0
 source_author: Tim Wortley + Claude
 tags:
   - verification
@@ -19,13 +19,13 @@ tags:
 
 # Verification Report
 
-**51 tests — 1 deferred · 50 pass.** **20 known defects, each with a release decision.**
+**57 tests — 1 deferred · 56 pass.** **23 known defects, each with a release decision.**
 
 Every entry carries an expected outcome and a **falsifier**. An entry without a falsifier is a demonstration that a process was followed, and the generator refuses to render one.
 
 `disclosed` is a conscious release decision with a release note — **not a synonym for untested.** A gap shipped knowingly is a normal release; a gap shipped quietly is a claim that fails when someone checks it.
 
-## Known defects, and what was decided about each  (20)
+## Known defects, and what was decided about each  (23)
 
 **Every defect this project knows about — including the ones already fixed — with the decision taken on it.** A gap shipped knowingly is a normal release; a gap shipped quietly is a claim that fails when someone checks it.
 
@@ -53,6 +53,9 @@ Decisions come from one vocabulary — **fix before release**, **release with di
 | **D-18** | The README gave no clone URL | low | fix before release | resolved |
 | **D-19** | An installed skill takes over bulk tasks without being asked | low | defer with justification | open |
 | **D-20** | The skill's indexing commands could not run | medium | fix before release | resolved |
+| **D-21** | A decision model run through generate or chat returned prose that read like an answer | medium | fix before release | resolved |
+| **D-22** | The published design specification still showed a deviation that had been closed | low | fix before release | resolved |
+| **D-23** | CI's Windows selftest failed from the first CI run, so v1.0.0 has no GitHub release | medium | fix before release | resolved |
 
 ### D-01 — The skill's contribution over the tool descriptions is unmeasured
 
@@ -274,7 +277,40 @@ Decisions come from one vocabulary — **fix before release**, **release with di
 | Rationale | The skill showed `vault_index.py build <folder> --out index.json` and searched `index.json`; the CLI takes `--name` and addresses an index by name, not path, so an agent following the skill got an error. Nothing tied the skill's commands to the parser. Found while re-checking the documentation for this release. Fixed, and the selftest now parses every vault_index.py command in the README, the manual and the skill with the CLI's own parser. |
 | Release note | Resolved: the skill's indexing commands match the CLI, and the selftest keeps them matched. Reinstall the skill from this release. |
 
-## Automated — runs with no host  (17)
+### D-21 — A decision model run through generate or chat returned prose that read like an answer
+
+**medium · fix before release · resolved**
+
+| | |
+|---|---|
+| Affects | — |
+| Evidence | `VT-063`, `VT-066` |
+| Rationale | Ollama 0.35.0 added decision models, which report the capability `decision` and not `completion`. /api/generate does not refuse one, and 1.0.0 did not check: on 2026-11-07 `nimble` through generate returned "Thinking Process: 1. **Analyze the Request:**" and ran into its token limit, reported as an ordinary truncated generation. A caller reading the text gets a label parsed out of prose, with none of the probabilities that are the reason to use a decision model -- a user misled. Fixed in 1.1.0: generate and chat refuse such a model with wrong_capability and name decide. |
+| Release note | Resolved in 1.1.0: generate and chat refuse a decision model and point to the new decide tool. |
+
+### D-22 — The published design specification still showed a deviation that had been closed
+
+**low · fix before release · resolved**
+
+| | |
+|---|---|
+| Affects | — |
+| Evidence | `VT-010` |
+| Rationale | docs/DESIGN.md as published at 1.0.0 carried FS-05 as an open deviation (section 14.2, and the trace matrix: '1 shipped with a deviation'), while its working copy had closed it on 2026-08-30 once VT-010 showed the chat template applied on both endpoints and FS-05 was reworded behaviourally. A reader of the published set saw a deviation the verification report contradicts. Found 2026-11-07 when the 1.1.0 edits did not apply to the working copy as they did to the published file. Resolved by publishing the design specification from its working copy for 1.1.0. |
+| Release note | Resolved in 1.1.0: the design specification no longer lists FS-05 as an open deviation. |
+
+### D-23 — CI's Windows selftest failed from the first CI run, so v1.0.0 has no GitHub release
+
+**medium · fix before release · resolved**
+
+| | |
+|---|---|
+| Affects | — |
+| Evidence | `VT-068` |
+| Rationale | The selftest compared the index header's source_root with the unresolved temp path; build() records the resolved one. GitHub's Windows runners put TEMP under an 8.3 short name that resolve() expands, so the comparison failed there and passed on every development machine. selftest (windows-latest) has been red on every push since CI was added on 2026-09-26, the v1.0.0 tag included. The release job needs every other job, so it was skipped: no release was created, and the skill ZIP the manual says to download from the release page was never attached. Nobody read the CI result after the push -- the release was checked by its tag, not by its release page. Found 2026-11-07 when the red-first step of 1.1.0 was checked job by job. The code was right; the test was wrong. |
+| Release note | Resolved in 1.1.0: CI is green on Windows, and this is the first release with a GitHub release page and the skill ZIP attached. v1.0.0 remains a tag only. |
+
+## Automated — runs with no host  (21)
 
 Executed by `--selftest` and `mutation_check.py`. Each names the exact check labels it relies on, and the generator fails if a label stops being printed.
 
@@ -506,7 +542,60 @@ Executed by `--selftest` and `mutation_check.py`. Each names the exact check lab
 | **Falsifier** | A documented command the CLI rejects. Demonstrated red first: against the skill as published at 4066f75, four commands failed (`--out index.json`, and three searches by path). Mutation: renaming `--name` in the parser is caught. |
 | Observed | SELFTEST PASSED after the skill was corrected (D-20); before the correction the same group failed on four skill commands. Mutation check 34/34, including the renamed-flag mutant. |
 
-## Scripted — a command and its output  (5)
+### VT-063 — A decision model is refused by generate and chat, before any model call
+
+**Result: PASS** · ENV-4, 2026-11-07, Python 3.10.12, build `working tree for 1.1.0 on eb0c323`
+
+| | |
+|---|---|
+| Discharges | `FS-32`, `UR-18`, `UR-21` |
+| Environment | ENV-4 |
+| Procedure | python ollama_server.py --selftest |
+| Expected | `wrong_capability` from generate and chat for a model reporting ["decision", "vision"], with no /api/generate or /api/chat request made; a completion model and a model that reports no capabilities proceed. |
+| **Falsifier** | generate returning `ok` or `truncated` text for a decision-only model -- the 1.0.0 behaviour, observed live 2026-11-07 when `nimble` returned "Thinking Process: 1. Analyze the Request" -- or a model with no reported capabilities being refused. |
+| Observed | SELFTEST PASSED, 225 checks, every labelled check present. mutation_check.py 46/46 caught, including the 12 mutants aimed at 1.1.0's new code. |
+
+### VT-064 — decide refuses malformed questions and never reports a mismatched answer as ok
+
+**Result: PASS** · ENV-4, 2026-11-07, Python 3.10.12, build `working tree for 1.1.0 on eb0c323`
+
+| | |
+|---|---|
+| Discharges | `FS-31`, `UR-34`, `UR-18` |
+| Environment | ENV-4 |
+| Procedure | python ollama_server.py --selftest |
+| Expected | invalid_request with no call for each malformed question; ok for a well-formed answer; bad_response or incomplete for each mismatch; endpoint_unavailable only when the version says the endpoint cannot exist or the model is known to be installed. |
+| **Falsifier** | Any mismatched answer reported ok, any malformed question sent to Ollama, or a 404 on an old Ollama reported as a missing model. |
+| Observed | SELFTEST PASSED, 225 checks, every labelled check present. mutation_check.py 46/46 caught, including the 12 mutants aimed at 1.1.0's new code. |
+
+### VT-065 — think is sent only when given, its levels are reported, and server_info reports Ollama's version
+
+**Result: PASS** · ENV-4, 2026-11-07, Python 3.10.12, build `working tree for 1.1.0 on eb0c323`
+
+| | |
+|---|---|
+| Discharges | `FS-33`, `FS-04`, `UR-18` |
+| Environment | ENV-4 |
+| Procedure | python ollama_server.py --selftest |
+| Expected | think present in the payload only when passed, and echoed; empty_generation with thinking_chars carries the thinking remedy; server_info gives `unavailable (...)` for an unreachable host and a three-state decide_supported. |
+| **Falsifier** | A think level accepted and not sent, a think key sent when none was given, or server_info reporting a version for a host it could not reach. |
+| Observed | SELFTEST PASSED, 225 checks, every labelled check present. mutation_check.py 46/46 caught, including the 12 mutants aimed at 1.1.0's new code. |
+<!-- VAULT ONLY -->| Note | The /api/show shape the stub uses ({"thinking": {"values": [...], "default": ...}}) and the rejection of an invalid level (HTTP 400, "invalid think value: \"bogus\" (must be \"high\", \"medium\", \"low\", \"max\", true, or false)") were observed on ENV-1, Ollama 0.40.12, 2026-11-07, by direct HTTP. |<!-- END VAULT ONLY -->
+
+### VT-068 — The build check holds where the temp directory resolves to a different path
+
+**Result: PASS** · ENV-4, 2026-11-07, Python 3.10.12, build `working tree for 1.1.0 on b3498f0`
+
+| | |
+|---|---|
+| Discharges | `FS-18`, `FS-28` |
+| Environment | ENV-4, ENV-8 |
+| Procedure | python ollama_server.py --selftest, once as usual and once with TMPDIR pointing at a symlink to a real directory -- on Linux a symlink makes resolve() change the path, as an 8.3 short name does on GitHub's Windows runners. |
+| Expected | The check passes in both runs: the header's source_root equals the resolved corpus path. |
+| **Falsifier** | The 1.0.0 form of the check, run with a symlinked TMPDIR, passing -- that would mean the reproduction does not reproduce the CI failure. |
+| Observed | With a symlinked TMPDIR, the check at b3498f0 FAILED -- 'SELFTEST FAILED: 1 assertion(s) - the header records where it was built from', the same single failure the windows-latest CI job reported -- and the working tree's check PASSED. Without the symlink, 225 checks pass; mutation_check 46/46. |
+
+## Scripted — a command and its output  (6)
 
 Reproducible by anyone with the repository and, where noted, a host.
 
@@ -568,18 +657,33 @@ Reproducible by anyone with the repository and, where noted, a host.
 | Observed | PASSED 2026-09-12 on ENV-6 across four cases and both arms -- eight runs. Bulk work delegated to a local model in every arm that faced it; the judgement task declined by every arm with a stated reason; 4000-token budgets set for the reasoning model by every arm; 24/24 aligned by tag on the batch-size case. Every prompt hashed, fixtures verified against MANIFEST.json before the run. Each run is recorded with its prompt hash and its evidence. |
 <!-- VAULT ONLY -->| Note | ENVIRONMENT CORRECTED 2026-09-12: first recorded as ENV-1, which was wrong. The MODEL ran on ENV-1's Ollama; the CALLERS were agent sessions in the session sandbox reaching the server through the MCP bridge. That is neither ENV-1 nor ENV-4 -- ENV-4 reaches no Ollama endpoint by construction, and the generator enforces it -- so ENV-6 was added for it. For a test of what a CALLER does, the caller's environment is the one that matters. Plan TP-P055-002, cases TC-P055-011 to 014, runs TR-P055-001 to 004, evidence in 40_Evidence/. Discharges UR-23 on what the runs establish rather than on the delta the old criterion asked for. The tool descriptions are guidance supplied with the system and are present for every caller, so this measures the system as shipped. |<!-- END VAULT ONLY -->
 
-### VT-061 — Both MCP SDK generations serve the nine tools over stdio
+### VT-061 — Both MCP SDK generations serve the ten tools over stdio
 
-**Result: PASS** · ENV-4, 2026-09-26, Python 3.10.12, build `working tree for 1.0.0`
+**Result: PASS** · ENV-4, 2026-11-07, Python 3.10.12, build `working tree for 1.1.0 on eb0c323`
 
 | | |
 |---|---|
 | Discharges | `UR-21` |
 | Environment | ENV-4, ENV-8 |
 | Procedure | `python ci/mcp_handshake.py`: start the server over stdio with the SDK's own client, list the tools, call server_info. Once with MCP SDK 1.x installed and once with 2.x. CI repeats it on every push (ENV-8). |
-| Expected | Nine tools enumerated and a server_info carrying the version, on both generations. |
+| Expected | Ten tools enumerated and a server_info carrying the version, on both generations. |
 | **Falsifier** | A generation on which the server fails to start, enumerates a different tool set, or answers server_info without the version. |
-| Observed | PASSED on MCP SDK 1.30.0 and 2.2.0: 9 tools enumerated over stdio on each, server_info carrying the version. Observed, not read from the source — which is what D-04 said was missing. |
+| Observed | PASSED on MCP SDK 1.30.0 and 2.3.0: 10 tools enumerated over stdio on each, server_info carrying the version. |
+<!-- VAULT ONLY -->| Note | 1.0.0 run: PASSED on MCP SDK 1.30.0 and 2.2.0 with nine tools (ENV-4, 2026-09-26). Reset to not_run for 1.1.0: the expected set is now ten with `decide`. The handshake went RED on the 1.1.0 working tree before its expected set was updated ("unexpected ['decide']"), which is the check doing its job. |<!-- END VAULT ONLY -->
+
+### VT-067 — Decision models against generated labels on a labelled case
+
+**Result: PASS** · ENV-1, 2026-11-07, build `working tree for 1.1.0 on eb0c323`
+
+| | |
+|---|---|
+| Discharges | `UR-34` |
+| Environment | ENV-1 · **needs a live host** |
+| Procedure | decision_eval.py, the project's evaluation harness (kept with the project's apparatus, not in this repository), run from the 1.1.0 working tree: --case case0 (80 note titles, five topics) and --case case4 (24 incident reports, six root causes), --models nimble,clef-flash,gemma3:4b,gemma4:12b, plus d3 on case4. It calls the shipped decide and generate tools in-process. One item per call on both paths, temperature 0; a thinking model is sent think=false. |
+| Expected | A results table per case: accuracy, items with no usable label, median seconds per item, and for decision models the mean confidence on right and on wrong answers. |
+| **Falsifier** | For the claim that decide is worth using: accuracy no better than the best generate baseline, or mean confidence on wrong answers no lower than on right ones. Either outcome is recorded as found, not retried until it changes. |
+| Observed | case0 (80 titles): clef-flash 72, gemma4:12b 70, nimble 66, gemma3:4b 62. Mean confidence right/wrong: clef-flash 0.82/0.51, nimble 0.94/0.58; clef-flash at confidence >= 0.5 keeps 75 at 0.96 accuracy, dropping 5 of its 8 errors and none of its 72 right answers. case4 (24 reports): d3, clef-flash, nimble, gemma4:12b 24; gemma3:4b 22 -- a ceiling case. All 232 decide calls verdict ok. Accuracy falsifier: not separated (2 of 80, inside noise). Confidence falsifier: did not fire. |
+<!-- VAULT ONLY -->| Note | Not reproducible from this repository alone: the harness and its labelled fixtures are not published (evals as a published artifact is deferred work). |<!-- END VAULT ONLY -->
 
 ## Inspection — settled by reading, not by running  (9)
 
@@ -708,7 +812,7 @@ A structural claim is verified by reading the code. Executing something would pr
 | Observed | PASSED 2026-09-12. The VR now renders a defect triage register -- 14 entries, each with a severity, a decision from the three-value vocabulary, a status, a rationale and release-note text -- and it PUBLISHED: Publish-Document.py wrote docs/VERIFICATION.md clean, where before it refused.<br>WHAT THE REGISTER FIXED, AND IT WAS NOT ONLY THE TABLE. The report cited seven internal issue identifiers that resolve in no published document. They are now rewritten to the public D-nn the report itself defines, from the register's own mapping; an identifier with no entry is left alone so the scan still refuses on it. The remaining internal provenance -- host paths, a username, run records belonging to another project -- ships to the vault copy inside VAULT ONLY markers and is stripped from the published one: 24 regions.<br>READ AS A STRANGER, AND THAT FOUND A DEFECT THE GATES DID NOT. Twelve rows carried a newline inside a table cell, which ends the row: the remainder rendered as loose paragraph text under a broken table, and had been doing so in every version of this report. The generator now renders a cell as one line. Nothing in --check or --release-gate could see it, because both read the manifest and neither reads the rendered document.<br>PROVENANCE: rendered and published at 6d3fa8b plus the then-uncommitted generate_verification.py change that adds the register, and re-rendered at 9181732 and again at 34ff28a, which added build provenance to the rendered header. run_on.build NAMES THE GENERATOR COMMIT THAT PRODUCED THE PUBLISHED DOCUMENT, not the one the work was drafted against. This stamp is stable: 34ff28a is the last commit that changed the generator, so re-rendering from here reproduces the same document. |
 <!-- VAULT ONLY -->| Note | Recorded 2026-09-11. UR-27 stood at a failing mark with no test in the register, which is the one combination the coverage check cannot flag as a hole. Closed 2026-09-12 by BLI-023's triage register. The dangling `issue: BLI-023` pointer was dropped when this passed -- BLI-023 is the work item that owned the table, not a defect, and the register defines defects. |<!-- END VAULT ONLY -->
 
-## Manual — live host, specific client, or a human  (20)
+## Manual — live host, specific client, or a human  (21)
 
 Written so someone who was not present can run them.
 
@@ -986,4 +1090,18 @@ Written so someone who was not present can run them.
 | Expected | HEAD is the published commit, the tree is clean, 16 files are tracked, and every table renders as a table. |
 | **Falsifier** | A different commit, a dirty tree, a different file count, or a table rendering raw pipes or split rows. |
 | Observed | PASSED. HEAD 4066f75db691401a0b843ff46d6038e9d5218b8a, clean, 16 files. Every table rendered, by the owner's visual inspection. Found alongside: the verification report carried no frontmatter while the other two documents did — fixed in this regeneration. |
+
+### VT-066 — decide answers choice, noul and score questions on a live decision model
+
+**Result: PASS** · ENV-1, 2026-11-07, build `working tree for 1.1.0 on eb0c323`
+
+| | |
+|---|---|
+| Discharges | `FS-31`, `UR-34` |
+| Environment | ENV-1 · **needs a live host** |
+| Procedure | Restart the MCP client so it loads the 1.1.0 working tree; confirm server_info reports version 1.1.0. Through the client, call THIS SERVER'S `decide` on `nimble` and on `clef-flash` with the probe's three questions (a four-label choice, a noul, a four-level score) over one shift-log entry (a pump that tripped twice and a dissolved-oxygen dip). Then call `generate` with `nimble`. |
+| Expected | verdict ok on both models with an answer to all three questions inside the options asked; `generate` with nimble returns wrong_capability. |
+| **Falsifier** | Any verdict other than ok from a well-formed call, an answer outside the options, or generate returning text for nimble. |
+| Observed | server_info: version 1.1.0, ollama_version 0.40.12, decide_supported yes. decide on nimble:latest and clef-flash:latest: verdict ok, location local, answers to all three questions inside the options asked (both chose equipment_fault; noul 0.983 and 0.904; score 1.62 and 2.03). generate on nimble:latest: wrong_capability, remedy 'Call decide with this model', no generation made. |
+<!-- VAULT ONLY -->| Note | nimble's answers to this identical input differ from the direct-HTTP probe made about 90 minutes earlier on the same host (noul 0.768 -> 0.983, score 1.45 -> 1.62, input_tokens 1332 both times) while two calls within the session agree; clef-flash is identical to four decimals across both. Not explained; recorded for the model inventory. |<!-- END VAULT ONLY -->
 
